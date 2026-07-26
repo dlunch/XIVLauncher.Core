@@ -309,8 +309,11 @@ public class CompatibilityTools
         {
             var frameworksPath = Path.Combine(currentDirectory.FullName, "Frameworks");
             var moltenVkCxPath = Path.Combine(frameworksPath, "moltenvkcx");
-            if (this.macOSBundledDxvkPath == null
-                && IsMacOSBundleOptionEnabled(currentDirectory, "MOLTENVKCX")
+            // Keep the renderer paired with the MoltenVK variant selected by
+            // its containing Wine bundle. Sikarugir's Kegworks DXVK build can
+            // allocate tens of gigabytes when paired with its newer generic
+            // MoltenVK library instead of moltenvkcx.
+            if (IsMacOSBundleOptionEnabled(currentDirectory, "MOLTENVKCX")
                 && Directory.Exists(moltenVkCxPath))
             {
                 libraryPaths.Add(moltenVkCxPath);
