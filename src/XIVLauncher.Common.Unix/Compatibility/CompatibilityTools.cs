@@ -243,7 +243,12 @@ public class CompatibilityTools
         }
 
         wineEnviromentVariables.Add("DXVK_HUD", dxvkHud);
-        wineEnviromentVariables.Add("DXVK_ASYNC", dxvkAsyncOn);
+        // Kegworks' asynchronous compiler can continuously allocate Metal
+        // resources on macOS. In practice this can consume tens of gigabytes
+        // before FFXIV reaches the lobby, so keep the bundle's stable path
+        // synchronous even if the cross-platform setting is enabled.
+        var effectiveDxvkAsync = this.macOSBundledDxvkPath != null ? "0" : dxvkAsyncOn;
+        wineEnviromentVariables.Add("DXVK_ASYNC", effectiveDxvkAsync);
         AddMacOSBundleEnvironment(wineEnviromentVariables);
         switch (Settings.SyncType)
         {
