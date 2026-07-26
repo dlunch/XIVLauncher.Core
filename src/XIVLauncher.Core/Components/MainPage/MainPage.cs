@@ -307,7 +307,7 @@ public class MainPage : Page
 
             if (loginResult.Status == KoreanLoginStatus.OtpRequired)
             {
-                this.App.AskForOtp();
+                this.App.AskForOtp(7);
                 var otp = await this.App.WaitForOtpAsync().ConfigureAwait(false);
                 if (otp == null)
                     return false;

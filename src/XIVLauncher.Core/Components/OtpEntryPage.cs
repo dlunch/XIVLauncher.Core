@@ -12,6 +12,7 @@ namespace XIVLauncher.Core.Components;
 public class OtpEntryPage : Page
 {
     private string otp = string.Empty;
+    private int otpLength = 6;
     private bool appearing = false;
     private OtpListener? otpListener;
     private TaskCompletionSource<string?> resultTcs = new();
@@ -32,9 +33,13 @@ public class OtpEntryPage : Page
             TryAcceptOtp(Program.Steam.GetEnteredGamepadText());
     }
 
-    public void Reset()
+    public void Reset(int otpLength = 6)
     {
+        if (otpLength <= 0)
+            throw new ArgumentOutOfRangeException(nameof(otpLength));
+
         this.otp = string.Empty;
+        this.otpLength = otpLength;
         this.appearing = true;
         this.Result = null;
         this.Cancelled = false;
@@ -44,7 +49,7 @@ public class OtpEntryPage : Page
         // BUG: We have to turn this off when using OTP server, because there's no way to dismiss open keyboards
         if (Program.Steam != null && Program.Steam.IsValid && Program.IsSteamDeckHardware && App.Settings.IsOtpServer is false)
         {
-            var success = Program.Steam.ShowGamepadTextInput(false, false, Strings.EnterYourOTP, 6, string.Empty);
+            var success = Program.Steam.ShowGamepadTextInput(false, false, Strings.EnterYourOTP, this.otpLength, string.Empty);
             Log.Verbose("ShowGamepadTextInput: {Success}", success);
         }
 
@@ -65,13 +70,13 @@ public class OtpEntryPage : Page
 
     private void TryAcceptOtp(string otp)
     {
-        if (string.IsNullOrEmpty(otp) || otp.Length != 6)
+        if (string.IsNullOrEmpty(otp) || otp.Length != this.otpLength)
         {
-            Log.Error("Invalid OTP: {Otp}", otp);
+            Log.Error("Invalid OTP length: expected {ExpectedLength}, got {ActualLength}", this.otpLength, otp?.Length ?? 0);
             return;
         }
 
-        Log.Verbose("Received OTP: {Otp}", otp);
+        Log.Verbose("Received OTP with expected length");
         this.Result = otp;
         this.resultTcs.TrySetResult(otp);
     }
@@ -123,7 +128,11 @@ public class OtpEntryPage : Page
                 this.appearing = false;
             }
 
-            var doEnter = ImGui.InputText("###otpInput", ref this.otp, 7, ImGuiInputTextFlags.CharsDecimal | ImGuiInputTextFlags.EnterReturnsTrue);
+            var doEnter = ImGui.InputText(
+                "###otpInput",
+                ref this.otp,
+                (uint)(this.otpLength + 1),
+                ImGuiInputTextFlags.CharsDecimal | ImGuiInputTextFlags.EnterReturnsTrue);
 
             var buttonSize = new Vector2(INPUT_WIDTH / 2 - 4, 30);
             ImGuiHelpers.CenterCursorFor(INPUT_WIDTH);
