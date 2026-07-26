@@ -44,7 +44,9 @@ public class CompatibilityTools
     private readonly DxvkHudType hudType;
     private readonly bool gamemodeOn;
     private readonly string dxvkAsyncOn;
-    private string? macOSBundledDxvkPath;
+    private string? macOSBundledRendererRootPath;
+    private string? macOSBundledRendererWindowsPath;
+    private bool macOSBundledDxmt;
 
     public bool IsToolReady { get; private set; }
     public WineSettings Settings { get; private set; }
@@ -104,13 +106,13 @@ public class CompatibilityTools
         }
 
         EnsurePrefix();
-        if (!TryInstallMacOSBundledDxvk())
+        if (!TryUseMacOSBundledRenderer())
             await Dxvk.Dxvk.InstallDxvk(httpClient, Settings.Prefix, dxvkDirectory, dxvkVersion).ConfigureAwait(false);
 
         IsToolReady = true;
     }
 
-    private bool TryInstallMacOSBundledDxvk()
+    private bool TryUseMacOSBundledRenderer()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
             || Settings.StartupType != WineStartupType.Custom
@@ -123,12 +125,37 @@ public class CompatibilityTools
         if (contentsDirectory == null)
             return false;
 
-        // macOS Wine bundles commonly ship a MoltenVK-compatible DXVK build. Linux DXVK
-        // releases can load on macOS but then hang or fail while creating the D3D device.
-        var bundledDxvkPath = Path.Combine(
-            contentsDirectory.FullName, "Frameworks", "renderer", "dxvk", "wine", "x86_64-windows");
-        if (!Directory.Exists(bundledDxvkPath))
+        var rendererRoot = Path.Combine(contentsDirectory.FullName, "Frameworks", "renderer");
+        var bundledDxmtWindowsPath =
+            Path.Combine(rendererRoot, "dxmt", "wine", "x86_64-windows");
+        var bundledDxmtUnixPath =
+            Path.Combine(rendererRoot, "dxmt", "wine", "x86_64-unix");
+        var bundledDxvkPath =
+            Path.Combine(rendererRoot, "dxvk", "wine", "x86_64-windows");
+
+        // XIV on Mac uses DXMT directly rather than translating D3D11 through Vulkan
+        // and MoltenVK. Prefer the same backend when the selected Wine bundle provides
+        // a complete DXMT pair. This also avoids the very large Metal allocations seen
+        // with Kegworks DXVK after FFXIV enters a fully loaded scene.
+        if (File.Exists(Path.Combine(bundledDxmtWindowsPath, "d3d11.dll"))
+            && File.Exists(Path.Combine(bundledDxmtWindowsPath, "dxgi.dll"))
+            && File.Exists(Path.Combine(bundledDxmtUnixPath, "winemetal.so")))
+        {
+            macOSBundledRendererRootPath = Path.Combine(rendererRoot, "dxmt", "wine");
+            macOSBundledRendererWindowsPath = bundledDxmtWindowsPath;
+            macOSBundledDxmt = true;
+        }
+        else if (Directory.Exists(bundledDxvkPath))
+        {
+            // Some bundles only ship a MoltenVK-compatible DXVK build. Linux DXVK
+            // releases can load on macOS but then hang while creating the D3D device.
+            macOSBundledRendererRootPath = bundledDxvkPath;
+            macOSBundledRendererWindowsPath = bundledDxvkPath;
+        }
+        else
+        {
             return false;
+        }
 
         var wineBuiltinPath = Path.GetFullPath(
             Path.Combine(WineBinPath, "..", "lib", "wine", "x86_64-windows"));
@@ -146,9 +173,10 @@ public class CompatibilityTools
                 File.Copy(builtinDll, Path.Combine(system32Path, dll), true);
         }
 
-        this.macOSBundledDxvkPath = bundledDxvkPath;
-        Log.Information("Using the DXVK renderer bundled with the custom macOS Wine app: {Path}",
-            bundledDxvkPath);
+        Log.Information(
+            "Using the {Renderer} renderer bundled with the custom macOS Wine app: {Path}",
+            macOSBundledDxmt ? "DXMT" : "DXVK",
+            macOSBundledRendererWindowsPath);
         return true;
     }
 
@@ -212,7 +240,7 @@ public class CompatibilityTools
 
         var ogl = wineD3D || this.dxvkVersion == DxvkVersion.Disabled;
 
-        var rendererOverride = this.macOSBundledDxvkPath != null
+        var rendererOverride = this.macOSBundledRendererWindowsPath != null
             ? "b"
             : (ogl ? "b" : "n,b");
         var wineEnviromentVariables = new Dictionary<string, string>
@@ -247,10 +275,16 @@ public class CompatibilityTools
         // resources on macOS. In practice this can consume tens of gigabytes
         // before FFXIV reaches the lobby, so keep the bundle's stable path
         // synchronous even if the cross-platform setting is enabled.
-        var effectiveDxvkAsync = this.macOSBundledDxvkPath != null ? "0" : dxvkAsyncOn;
+        var effectiveDxvkAsync = this.macOSBundledRendererWindowsPath != null ? "0" : dxvkAsyncOn;
         wineEnviromentVariables.Add("DXVK_ASYNC", effectiveDxvkAsync);
         AddMacOSBundleEnvironment(wineEnviromentVariables);
-        switch (Settings.SyncType)
+        if (this.macOSBundledDxmt)
+        {
+            // The current XIV on Mac runtime uses macOS-native msync by default.
+            // Do not enable esync/fsync at the same time.
+            wineEnviromentVariables.Add("WINEMSYNC", "1");
+        }
+        else switch (Settings.SyncType)
         {
             case WineSyncType.ESync:
                 wineEnviromentVariables.Add("WINEESYNC", "1");
@@ -333,9 +367,16 @@ public class CompatibilityTools
         environment["DYLD_FALLBACK_LIBRARY_PATH"] =
             string.Join(Path.PathSeparator, libraryPaths.Distinct(StringComparer.Ordinal));
 
-        if (this.macOSBundledDxvkPath != null)
+        if (this.macOSBundledRendererWindowsPath != null)
         {
-            var wineDllPaths = new List<string> { this.macOSBundledDxvkPath };
+            // Wine builtin PE modules and their Unix companions must be discovered
+            // from one architecture-containing root. Passing the x86_64-windows and
+            // x86_64-unix children separately makes winemetal fail its Unix-function
+            // ABI handshake (c0000142) even though all three DXMT DLLs are found.
+            var wineDllPaths = new List<string>
+            {
+                this.macOSBundledRendererRootPath ?? this.macOSBundledRendererWindowsPath
+            };
             var existingWineDllPath = Environment.GetEnvironmentVariable("WINEDLLPATH");
             if (!string.IsNullOrEmpty(existingWineDllPath))
                 wineDllPaths.Add(existingWineDllPath);
@@ -345,7 +386,20 @@ public class CompatibilityTools
             // CrossOver-derived Wine engines, including Sikarugir's, use this
             // companion variable to put renderer modules ahead of their bundled
             // WineD3D modules.
-            environment["WINEDLLPATH_PREPEND"] = this.macOSBundledDxvkPath;
+            environment["WINEDLLPATH_PREPEND"] =
+                this.macOSBundledRendererRootPath ?? this.macOSBundledRendererWindowsPath;
+        }
+
+        if (this.macOSBundledDxmt)
+        {
+            // Match XIV on Mac's conservative DXMT defaults. Upscaling is disabled;
+            // users retain control of resolution and the game's own frame limiter.
+            environment["DXMT_CONFIG"] =
+                "d3d11.metalSpatialUpscaleFactor=1.0;d3d11.preferredMaxFrameRate=0;";
+            environment["DXMT_ENABLE_NVEXT"] = "1";
+            environment["DXMT_METALFX_SPATIAL_SWAPCHAIN"] = "0";
+            environment["MVK_CONFIG_FAST_MATH_ENABLED"] = "0";
+            environment["MVK_CONFIG_RESUME_LOST_DEVICE"] = "1";
         }
     }
 
