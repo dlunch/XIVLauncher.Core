@@ -44,6 +44,7 @@ public class LauncherApp : Component
         OtpEntry,
         Fts,
         SteamDeckPrompt,
+        RegionSelection,
     }
 
     private LauncherState state = LauncherState.Main;
@@ -87,6 +88,10 @@ public class LauncherApp : Component
                     this.steamDeckPromptPage.OnShow();
                     break;
 
+                case LauncherState.RegionSelection:
+                    this.regionSelectionPage.OnShow();
+                    break;
+
                 default:
                     throw new ArgumentOutOfRangeException(nameof(value), value, null);
             }
@@ -101,6 +106,7 @@ public class LauncherApp : Component
         LauncherState.OtpEntry => this.otpEntryPage,
         LauncherState.Fts => this.ftsPage,
         LauncherState.SteamDeckPrompt => this.steamDeckPromptPage,
+        LauncherState.RegionSelection => this.regionSelectionPage,
         _ => throw new ArgumentOutOfRangeException(nameof(this.state), this.state, null)
     };
 
@@ -119,10 +125,11 @@ public class LauncherApp : Component
     private readonly OtpEntryPage otpEntryPage;
     private readonly FtsPage ftsPage;
     private readonly SteamDeckPromptPage steamDeckPromptPage;
+    private readonly RegionSelectionPage regionSelectionPage;
 
     private readonly Background background = new();
 
-    public LauncherApp(Storage storage, string frontierUrl, string? cutOffBootver)
+    public LauncherApp(Storage storage, string frontierUrl, string? cutOffBootver, bool isFirstLaunch)
     {
         this.Storage = storage;
 
@@ -137,6 +144,10 @@ public class LauncherApp : Component
         this.LoadingPage = new LoadingPage(this);
         this.ftsPage = new FtsPage(this);
         this.steamDeckPromptPage = new SteamDeckPromptPage(this);
+        this.regionSelectionPage = new RegionSelectionPage(this);
+
+        if (isFirstLaunch)
+            this.state = LauncherState.RegionSelection;
 
         if (!EnvironmentSettings.IsNoKillswitch && !string.IsNullOrEmpty(cutOffBootver))
         {
@@ -250,10 +261,21 @@ public class LauncherApp : Component
 
     public void RunStartupTasks()
     {
+        if (this.State == LauncherState.RegionSelection)
+            return;
+
 #if FLATPAK
         this.ftsPage.OpenFtsIfNeeded();
 #endif
-        this.mainPage.DoAutoLoginIfApplicable();
+        if (this.State == LauncherState.Main)
+            this.mainPage.DoAutoLoginIfApplicable();
+    }
+
+    public void SelectRegion(GameRegion region)
+    {
+        this.Settings.GameRegion = region;
+        this.State = LauncherState.Main;
+        this.RunStartupTasks();
     }
 
     public override void Draw()

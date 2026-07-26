@@ -3,12 +3,14 @@ using Newtonsoft.Json.Linq;
 
 using Serilog;
 
+using XIVLauncher.Core.Configuration;
+
 namespace XIVLauncher.Core.Accounts;
 
 public class XivAccount
 {
     [JsonIgnore]
-    public string Id => $"{UserName}-{UseOtp}-{UseSteamServiceAccount}";
+    public string Id => $"{GameRegion}-{UserName}-{UseOtp}-{UseSteamServiceAccount}";
 
     public override string ToString() => Id;
 
@@ -22,19 +24,27 @@ public class XivAccount
             if (string.IsNullOrEmpty(UserName))
                 return string.Empty;
 
-            var credentials = Program.Secrets.GetPassword(UserName);
+            var credentials = Program.Secrets.GetPassword($"{GameRegion}:{UserName}");
+            if (credentials == null && GameRegion == XIVLauncher.Core.Configuration.GameRegion.Global)
+            {
+                credentials = Program.Secrets.GetPassword(UserName);
+                if (credentials != null)
+                    Program.Secrets.SavePassword($"{GameRegion}:{UserName}", credentials);
+            }
+
             return credentials ?? string.Empty;
         }
         set
         {
             if (!string.IsNullOrEmpty(value))
             {
-                Program.Secrets.SavePassword(UserName, value);
+                Program.Secrets.SavePassword($"{GameRegion}:{UserName}", value);
             }
         }
     }
 
     public bool SavePassword { get; set; }
+    public GameRegion GameRegion { get; set; }
     public bool UseSteamServiceAccount { get; set; }
     public bool UseOtp { get; set; }
     public bool IsFreeTrial { get; set; }
@@ -45,9 +55,10 @@ public class XivAccount
 
     public string LastSuccessfulOtp = string.Empty;
 
-    public XivAccount(string userName)
+    public XivAccount(string userName, GameRegion gameRegion = XIVLauncher.Core.Configuration.GameRegion.Global)
     {
         UserName = userName.ToLower();
+        GameRegion = gameRegion;
     }
 
     public string? FindCharacterThumb()

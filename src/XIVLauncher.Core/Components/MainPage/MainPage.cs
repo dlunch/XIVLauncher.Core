@@ -11,6 +11,7 @@ using XIVLauncher.Common.Addon;
 using XIVLauncher.Common.Dalamud;
 using XIVLauncher.Common.Game;
 using XIVLauncher.Common.Game.Exceptions;
+using XIVLauncher.Common.Game.Korea;
 using XIVLauncher.Common.Game.Patch;
 using XIVLauncher.Common.Game.Patch.Acquisition.Aria;
 using XIVLauncher.Common.Game.Patch.PatchList;
@@ -20,6 +21,7 @@ using XIVLauncher.Common.Unix.Compatibility.Wine;
 using XIVLauncher.Common.Util;
 using XIVLauncher.Common.Windows;
 using XIVLauncher.Core.Accounts;
+using XIVLauncher.Core.Configuration;
 using XIVLauncher.Core.Resources.Localization;
 using XIVLauncher.Core.Support;
 
@@ -28,15 +30,23 @@ namespace XIVLauncher.Core.Components.MainPage;
 public class MainPage : Page
 {
     private readonly LoginFrame loginFrame;
+    private readonly KoreanLoginFrame koreanLoginFrame;
     private readonly NewsFrame newsFrame;
     private readonly ActionButtons actionButtons;
 
     public bool IsLoggingIn { get; private set; }
 
+    private GameRegion activeRegion;
+    private KoreanLauncherClient? koreanLauncherClient;
+    private KoreanCaptchaChallenge? koreanCaptchaChallenge;
+    private Task<KoreanCaptchaChallenge>? koreanCaptchaTask;
+    private CancellationTokenSource? koreanLoginCancellation;
+
     public MainPage(LauncherApp app)
         : base(app)
     {
         this.loginFrame = new LoginFrame(this);
+        this.koreanLoginFrame = new KoreanLoginFrame(this);
         this.newsFrame = new NewsFrame(app);
 
         this.actionButtons = new ActionButtons();
@@ -45,15 +55,22 @@ public class MainPage : Page
         this.AccountSwitcher.AccountChanged += this.AccountSwitcherOnAccountChanged;
 
         this.loginFrame.OnLogin += this.ProcessLogin;
+        this.koreanLoginFrame.OnLogin += this.ProcessKoreanLogin;
+        this.koreanLoginFrame.OnRefreshCaptcha += this.RefreshKoreanCaptcha;
         this.actionButtons.OnSettingsButtonClicked += () => this.App.State = LauncherApp.LauncherState.Settings;
         this.actionButtons.OnStatusButtonClicked += () => AppUtil.OpenBrowser("https://is.xivup.com/");
         this.actionButtons.OnAccountButtonClicked += () => AppUtil.OpenBrowser("https://sqex.to/Msp");
 
         this.Padding = new Vector2(32f, 32f);
 
-        var savedAccount = App.Accounts.CurrentAccount;
+        this.activeRegion = App.Settings.GameRegion.GetValueOrDefault(GameRegion.Global);
+        var regionAccounts = App.Accounts.Accounts.Where(account => account.GameRegion == this.activeRegion).ToArray();
+        var savedAccount = regionAccounts.FirstOrDefault(account => account.Id == App.Settings.CurrentAccountId)
+                           ?? regionAccounts.FirstOrDefault();
 
         if (savedAccount != null) this.SwitchAccount(savedAccount, false);
+        if (this.activeRegion == GameRegion.Korea)
+            this.RefreshKoreanCaptcha();
 
         if (PlatformHelpers.IsElevated())
             App.ShowMessage(Strings.XLElevatedWarning, "XIVLauncher");
@@ -67,7 +84,10 @@ public class MainPage : Page
     {
         Debug.Assert(App.State == LauncherApp.LauncherState.Main);
 
-        if ((App.Settings.IsAutologin ?? false) && !string.IsNullOrEmpty(this.loginFrame.Username) && !string.IsNullOrEmpty(this.loginFrame.Password))
+        if (this.activeRegion == GameRegion.Global
+            && (App.Settings.IsAutologin ?? false)
+            && !string.IsNullOrEmpty(this.loginFrame.Username)
+            && !string.IsNullOrEmpty(this.loginFrame.Password))
             ProcessLogin(LoginAction.Game);
     }
 
@@ -75,30 +95,75 @@ public class MainPage : Page
     {
         base.Draw();
 
+        this.UpdateRegion();
+        this.UpdateKoreanCaptcha();
+
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(32f, 32f));
         this.newsFrame.Draw();
 
         ImGui.SameLine();
 
-        this.loginFrame.Draw();
+        if (this.activeRegion == GameRegion.Korea)
+            this.koreanLoginFrame.Draw();
+        else
+            this.loginFrame.Draw();
         this.AccountSwitcher.Draw();
 
         this.actionButtons.Draw();
         ImGui.PopStyleVar();
     }
 
+    public override void OnShow()
+    {
+        this.UpdateRegion();
+        base.OnShow();
+    }
+
+    private void UpdateRegion()
+    {
+        var configuredRegion = App.Settings.GameRegion.GetValueOrDefault(GameRegion.Global);
+        if (configuredRegion != this.activeRegion)
+        {
+            this.activeRegion = configuredRegion;
+            this.koreanLoginCancellation?.Cancel();
+            this.koreanLoginCancellation?.Dispose();
+            this.koreanLoginCancellation = null;
+            this.koreanCaptchaTask = null;
+            this.koreanCaptchaChallenge = null;
+            this.koreanLoginFrame.ClearCaptcha();
+            this.koreanLauncherClient?.Dispose();
+            this.koreanLauncherClient = null;
+
+            var regionAccounts = App.Accounts.Accounts.Where(account => account.GameRegion == this.activeRegion).ToArray();
+            var account = regionAccounts.FirstOrDefault(candidate => candidate.Id == App.Settings.CurrentAccountId)
+                          ?? regionAccounts.FirstOrDefault();
+            if (account != null)
+                this.SwitchAccount(account, false);
+            if (this.activeRegion == GameRegion.Korea)
+                this.RefreshKoreanCaptcha();
+        }
+    }
+
     public void ReloadNews() => this.newsFrame.ReloadNews();
 
     private void SwitchAccount(XivAccount account, bool saveAsCurrent)
     {
-        this.loginFrame.Username = account.UserName;
-        this.loginFrame.IsOtp = account.UseOtp;
-        this.loginFrame.IsFreeTrial = account.IsFreeTrial;
-        this.loginFrame.IsSteam = account.UseSteamServiceAccount;
-        this.loginFrame.IsAutoLogin = App.Settings.IsAutologin ?? false;
+        if (account.GameRegion == GameRegion.Korea)
+        {
+            this.koreanLoginFrame.Username = account.UserName;
+            this.koreanLoginFrame.Password = account.SavePassword ? account.Password : string.Empty;
+        }
+        else
+        {
+            this.loginFrame.Username = account.UserName;
+            this.loginFrame.IsOtp = account.UseOtp;
+            this.loginFrame.IsFreeTrial = account.IsFreeTrial;
+            this.loginFrame.IsSteam = account.UseSteamServiceAccount;
+            this.loginFrame.IsAutoLogin = App.Settings.IsAutologin ?? false;
 
-        if (account.SavePassword)
-            this.loginFrame.Password = account.Password;
+            if (account.SavePassword)
+                this.loginFrame.Password = account.Password;
+        }
 
         if (saveAsCurrent)
         {
@@ -109,6 +174,46 @@ public class MainPage : Page
     private void AccountSwitcherOnAccountChanged(object? sender, XivAccount e)
     {
         SwitchAccount(e, true);
+    }
+
+    private void RefreshKoreanCaptcha()
+    {
+        if (this.koreanCaptchaTask is { IsCompleted: false })
+            return;
+
+        this.koreanLauncherClient ??= KoreanLauncherClient.CreateDefault();
+        if (this.koreanLoginCancellation is null || this.koreanLoginCancellation.IsCancellationRequested)
+        {
+            this.koreanLoginCancellation?.Dispose();
+            this.koreanLoginCancellation = new CancellationTokenSource();
+        }
+        this.koreanCaptchaChallenge = null;
+        this.koreanLoginFrame.ClearCaptcha();
+        this.koreanLoginFrame.IsCaptchaLoading = true;
+        this.koreanLoginFrame.CaptchaError = null;
+        this.koreanCaptchaTask = this.koreanLauncherClient.PrepareLoginAsync(this.koreanLoginCancellation.Token);
+    }
+
+    private void UpdateKoreanCaptcha()
+    {
+        if (this.koreanCaptchaTask is not { IsCompleted: true } task)
+            return;
+
+        this.koreanCaptchaTask = null;
+        this.koreanLoginFrame.IsCaptchaLoading = false;
+
+        if (task.IsCompletedSuccessfully)
+        {
+            this.koreanCaptchaChallenge = task.Result;
+            this.koreanLoginFrame.SetCaptcha(task.Result.ImageBytes);
+            return;
+        }
+
+        if (!task.IsCanceled)
+        {
+            Log.Error(task.Exception, "Could not prepare Korean launcher CAPTCHA");
+            this.koreanLoginFrame.CaptchaError = "Could not load the CAPTCHA. Check your connection and try again.";
+        }
     }
 
     private void ProcessLogin(LoginAction action)
@@ -168,6 +273,135 @@ public class MainPage : Page
         {
             if (!App.HandleContinuationBlocking(t))
                 this.Reactivate();
+        });
+    }
+
+    private void ProcessKoreanLogin(LoginAction action)
+    {
+        if (this.IsLoggingIn || this.koreanLauncherClient == null || this.koreanCaptchaChallenge == null)
+            return;
+
+        var client = this.koreanLauncherClient;
+        var challenge = this.koreanCaptchaChallenge;
+        var username = this.koreanLoginFrame.Username;
+        var password = this.koreanLoginFrame.Password;
+        var captcha = this.koreanLoginFrame.Captcha;
+        this.koreanLoginCancellation?.Dispose();
+        this.koreanLoginCancellation = new CancellationTokenSource();
+        var cancellationToken = this.koreanLoginCancellation.Token;
+        Action cancelLogin = this.koreanLoginCancellation.Cancel;
+        this.App.LoadingPage.Cancelled += cancelLogin;
+
+        this.koreanCaptchaChallenge = null;
+        this.App.StartLoading("Logging in to the Korean service…", canCancel: true, canDisableAutoLogin: false);
+        this.IsLoggingIn = true;
+
+        Task.Run(async () =>
+        {
+            var loginResult = await client.LoginAsync(
+                challenge,
+                username,
+                password,
+                captcha,
+                cancellationToken).ConfigureAwait(false);
+
+            if (loginResult.Status == KoreanLoginStatus.OtpRequired)
+            {
+                this.App.AskForOtp();
+                var otp = await this.App.WaitForOtpAsync().ConfigureAwait(false);
+                if (otp == null)
+                    return false;
+
+                this.App.StartLoading("Verifying one-time password…", canCancel: true);
+                loginResult = await client.SubmitOtpAsync(
+                    loginResult.OtpChallenge!,
+                    otp,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            PersistAccount(username, password, false, false, false, GameRegion.Korea);
+
+            this.App.StartLoading("Checking Korean game files…", canCancel: true);
+            var koreanGamePath = this.App.Settings.GamePath!;
+
+            var patchService = new KoreanPatchService(Program.HttpClient);
+            var patchPlan = await patchService
+                .CheckAsync(koreanGamePath, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (patchPlan.PendingPatches.Count > 0)
+            {
+                if (!await TryHandlePatchAsync(
+                        Repository.Ffxiv,
+                        patchPlan.PendingPatches.ToArray(),
+                        string.Empty).ConfigureAwait(false))
+                {
+                    return false;
+                }
+
+                this.App.StartLoading("Verifying Korean game installation…", canCancel: true);
+                var verifiedPlan = await patchService
+                    .CheckAsync(koreanGamePath, cancellationToken)
+                    .ConfigureAwait(false);
+                if (verifiedPlan.PendingPatches.Count != 0
+                    || !Repository.Ffxiv.GetVerFile(koreanGamePath).Exists
+                    || !File.Exists(Path.Combine(koreanGamePath.FullName, "game", "ffxiv_dx11.exe")))
+                {
+                    throw new InvalidOperationException(
+                        "The Korean game installation did not reach the version reported by the patch server.");
+                }
+            }
+
+            if (!Repository.Ffxiv.GetVerFile(koreanGamePath).Exists
+                || !File.Exists(Path.Combine(koreanGamePath.FullName, "game", "ffxiv_dx11.exe")))
+            {
+                throw new InvalidOperationException(
+                    patchPlan.IsFreshInstall
+                        ? "The Korean patch server did not provide a complete fresh-install chain."
+                        : "The Korean game installation is incomplete.");
+            }
+
+            if (action == LoginAction.GameNoLaunch)
+            {
+                this.App.ShowMessageBlocking(Strings.UpdateCheckFinished, "XIVLauncher");
+                return false;
+            }
+
+            this.App.StartLoading("Creating Korean game session…", canCancel: true);
+            var token = await client.CreateGameTokenAsync(
+                loginResult.AuthenticatedSession!,
+                cancellationToken).ConfigureAwait(false);
+
+            using var process = await StartKoreanGameAndAddon(
+                token,
+                action == LoginAction.GameNoDalamud,
+                action == LoginAction.GameNoPlugins,
+                action == LoginAction.GameNoThirdparty).ConfigureAwait(false);
+
+            if (process == null)
+                throw new InvalidOperationException("Could not obtain Process Handle");
+
+            if (process.ExitCode != 0 && (this.App.Settings.TreatNonZeroExitCodeAsFailure ?? false))
+                throw new InvalidOperationException("Game exited with non-zero exit code");
+
+            return true;
+        }).ContinueWith(task =>
+        {
+            this.App.LoadingPage.Cancelled -= cancelLogin;
+            var succeeded = !task.IsCanceled
+                            && this.App.HandleContinuationBlocking(task)
+                            && task.Result;
+            if (succeeded)
+            {
+                var sdlEvent = new SDLEvent { Type = (int)SDLEventType.Quit };
+                if (SDL.PushEvent(ref sdlEvent))
+                    Log.Error("Failed to push event to SDL queue: {Error}", SDL.GetErrorS());
+                return;
+            }
+
+            this.Reactivate();
+            if (this.activeRegion == GameRegion.Korea)
+                this.RefreshKoreanCaptcha();
         });
     }
 
@@ -537,6 +771,34 @@ public class MainPage : Page
 
     public async Task<Process> StartGameAndAddon(Launcher.LoginResult loginResult, bool isSteam, bool forceNoDalamud, bool noPlugins, bool noThird)
     {
+        return await StartGameAndAddon(
+            loginResult,
+            null,
+            isSteam,
+            forceNoDalamud,
+            noPlugins,
+            noThird).ConfigureAwait(false);
+    }
+
+    private async Task<Process> StartKoreanGameAndAddon(string gameToken, bool forceNoDalamud, bool noPlugins, bool noThird)
+    {
+        return await StartGameAndAddon(
+            null,
+            gameToken,
+            false,
+            forceNoDalamud,
+            noPlugins,
+            noThird).ConfigureAwait(false);
+    }
+
+    private async Task<Process> StartGameAndAddon(
+        Launcher.LoginResult? loginResult,
+        string? koreanGameToken,
+        bool isSteam,
+        bool forceNoDalamud,
+        bool noPlugins,
+        bool noThird)
+    {
         var dalamudOk = false;
 
         IDalamudRunner dalamudRunner;
@@ -562,7 +824,8 @@ public class MainPage : Page
 
         var dalamudLauncher = new DalamudLauncher(dalamudRunner, Program.DalamudUpdater,
             App.Settings.DalamudLoadMethod.GetValueOrDefault(DalamudLoadMethod.DllInject), App.Settings.GamePath,
-            App.Storage.Root, App.Storage.GetFolder("logs"), App.Settings.ClientLanguage ?? ClientLanguage.English,
+            App.Storage.Root, App.Storage.GetFolder("logs"),
+            koreanGameToken != null ? ClientLanguage.Korean : App.Settings.ClientLanguage ?? ClientLanguage.English,
             App.Settings.DalamudLoadDelay, false, noPlugins, noThird, Troubleshooting.GetTroubleshootingJson());
 
         try
@@ -731,7 +994,7 @@ public class MainPage : Page
             // SE has its own way of encoding spaces when encrypting arguments, which interferes 
             // with quoting, but they are necessary when passing paths unencrypted
             var userPath = Program.CompatibilityTools.UnixToWinePath(App.Settings.GameConfigPath!.FullName);
-            if (App.Settings.IsEncryptArgs.GetValueOrDefault(true))
+            if (koreanGameToken != null || App.Settings.IsEncryptArgs.GetValueOrDefault(true))
                 gameArgs += $" UserPath={userPath}";
             else
                 gameArgs += $" UserPath=\"{userPath}\"";
@@ -744,16 +1007,29 @@ public class MainPage : Page
         }
 
         // We won't do any sanity checks here anymore, since that should be handled in StartLogin
-        var launchedProcess = App.Launcher.LaunchGame(runner,
-            loginResult.UniqueId,
-            loginResult.OauthLogin.Region,
-            loginResult.OauthLogin.MaxExpansion,
-            isSteam,
-            gameArgs,
-            App.Settings.GamePath,
-            App.Settings.ClientLanguage.GetValueOrDefault(ClientLanguage.English),
-            App.Settings.IsEncryptArgs.GetValueOrDefault(true),
-            App.Settings.DpiAwareness.GetValueOrDefault(DpiAwareness.Unaware));
+        Process? launchedProcess;
+        if (koreanGameToken != null)
+        {
+            launchedProcess = new KoreanGameLauncher().LaunchGame(
+                runner,
+                koreanGameToken,
+                gameArgs,
+                App.Settings.GamePath!,
+                App.Settings.DpiAwareness.GetValueOrDefault(DpiAwareness.Unaware));
+        }
+        else
+        {
+            launchedProcess = App.Launcher.LaunchGame(runner,
+                loginResult!.UniqueId,
+                loginResult.OauthLogin.Region,
+                loginResult.OauthLogin.MaxExpansion,
+                isSteam,
+                gameArgs,
+                App.Settings.GamePath,
+                App.Settings.ClientLanguage.GetValueOrDefault(ClientLanguage.English),
+                App.Settings.IsEncryptArgs.GetValueOrDefault(true),
+                App.Settings.DpiAwareness.GetValueOrDefault(DpiAwareness.Unaware));
+        }
 
         // Hide the launcher if not Steam Deck or if using as a compatibility tool (XLM)
         // Show the Steam Deck prompt if on steam deck and not using as a compatibility tool
@@ -814,22 +1090,34 @@ public class MainPage : Page
         return launchedProcess!;
     }
 
-    private void PersistAccount(string username, string password, bool isOtp, bool isSteam, bool isFreeTrial)
+    private void PersistAccount(
+        string username,
+        string password,
+        bool isOtp,
+        bool isSteam,
+        bool isFreeTrial,
+        GameRegion gameRegion = GameRegion.Global)
     {
         // Update account password.
-        if (App.Accounts.CurrentAccount != null && App.Accounts.CurrentAccount.UserName.Equals(username, StringComparison.Ordinal) &&
+        if (App.Accounts.CurrentAccount != null
+            && App.Accounts.CurrentAccount.GameRegion == gameRegion
+            && App.Accounts.CurrentAccount.UserName.Equals(username, StringComparison.Ordinal) &&
             App.Accounts.CurrentAccount.Password != password &&
             App.Accounts.CurrentAccount.SavePassword)
             App.Accounts.UpdatePassword(App.Accounts.CurrentAccount, password);
 
         // Update account free trial status.
-        if (App.Accounts.CurrentAccount != null && App.Accounts.CurrentAccount.UserName.Equals(username, StringComparison.OrdinalIgnoreCase) &&
+        if (App.Accounts.CurrentAccount != null
+            && App.Accounts.CurrentAccount.GameRegion == gameRegion
+            && App.Accounts.CurrentAccount.UserName.Equals(username, StringComparison.OrdinalIgnoreCase) &&
             App.Accounts.CurrentAccount.IsFreeTrial != isFreeTrial)
             App.Accounts.UpdateFreeTrial(App.Accounts.CurrentAccount, isFreeTrial);
 
-        if (App.Accounts.CurrentAccount is null || App.Accounts.CurrentAccount.Id != $"{username}-{isOtp}-{isSteam}")
+        var normalizedUserName = username.ToLower();
+        var accountId = $"{gameRegion}-{normalizedUserName}-{isOtp}-{isSteam}";
+        if (App.Accounts.CurrentAccount is null || App.Accounts.CurrentAccount.Id != accountId)
         {
-            var accountToSave = new XivAccount(username)
+            var accountToSave = new XivAccount(username, gameRegion)
             {
                 Password = password,
                 SavePassword = true,
@@ -915,8 +1203,8 @@ public class MainPage : Page
         using var installer = new PatchInstaller(App.Settings.GamePath, App.Settings.KeepPatches ?? false);
         using var acquisition = new AriaPatchAcquisition(new FileInfo(Path.Combine(App.Storage.GetFolder("logs").FullName, "aria2.log")));
         Program.Patcher = new PatchManager(acquisition, App.Settings.PatchSpeedLimit, repository, pendingPatches, App.Settings.GamePath,
-                                           App.Settings.PatchPath, installer, App.Launcher, sid);
-        Program.Patcher.OnFail += PatcherOnFail;
+            App.Settings.PatchPath, installer, App.Launcher, sid);
+        Program.Patcher.OnFail += this.PatcherOnFail;
         installer.OnFail += this.InstallerOnFail;
 
         /*

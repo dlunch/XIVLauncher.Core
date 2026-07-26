@@ -3,6 +3,7 @@ using System.Numerics;
 using Hexa.NET.ImGui;
 
 using XIVLauncher.Core.Accounts;
+using XIVLauncher.Core.Configuration;
 using XIVLauncher.Core.Resources.Localization;
 
 namespace XIVLauncher.Core.Components.MainPage;
@@ -33,12 +34,15 @@ public class AccountSwitcher : Component
 
         if (ImGui.BeginPopupContextItem(ACCOUNT_SWITCHER_POPUP_ID))
         {
-            if (this.manager.Accounts.Count == 0)
+            var region = Program.Config.GameRegion.GetValueOrDefault(GameRegion.Global);
+            var accounts = this.manager.Accounts.Where(account => account.GameRegion == region).ToArray();
+
+            if (accounts.Length == 0)
             {
                 ImGui.Text(Strings.NoSavedAccounts);
             }
 
-            foreach (XivAccount account in this.manager.Accounts)
+            foreach (XivAccount account in accounts)
             {
                 var name = account.UserName;
 

@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   Release:
-    if: github.repository == 'goatcorp/XIVLauncher.Core'
     runs-on: ubuntu-latest
     env:
       GITHUB_REPOSITORY: ${{ github.repository }}

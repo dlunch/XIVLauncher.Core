@@ -16,6 +16,8 @@ public interface ILauncherConfig
 
     public string? AcceptLanguage { get; set; }
 
+    public GameRegion? GameRegion { get; set; }
+
     public bool? IsAutologin { get; set; }
 
     public DirectoryInfo? GamePath { get; set; }

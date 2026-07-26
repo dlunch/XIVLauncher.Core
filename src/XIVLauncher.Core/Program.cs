@@ -36,7 +36,7 @@ namespace XIVLauncher.Core;
 
 sealed class Program
 {
-    private const string APP_NAME = "xlcore";
+    private const string APP_NAME = "xlcore_kr";
     private static readonly Vector3 ClearColor = new(0.1f, 0.1f, 0.1f);
     private static string[] mainArgs = [];
     private static LauncherApp launcherApp = null!;
@@ -110,6 +110,7 @@ sealed class Program
         }
 
         Config.GameConfigPath ??= storage.GetFolder("ffxivConfig");
+        Config.GameRegion ??= GameRegion.Global;
         Config.ClientLanguage ??= ClientLanguage.English;
         Config.DpiAwareness ??= DpiAwareness.Unaware;
         Config.IsAutologin ??= false;
@@ -197,6 +198,7 @@ sealed class Program
         }
 
         SetupLogging(mainArgs);
+        var isFirstLaunch = !storage.GetFile("launcher.ini").Exists;
         LoadConfig(storage);
 
         Secrets = GetSecretProvider(storage);
@@ -315,7 +317,7 @@ sealed class Program
             StyleModelV1.DalamudStandard.Apply();
 
             var launcherClientConfig = LauncherClientConfig.GetAsync().GetAwaiter().GetResult();
-            launcherApp = new LauncherApp(storage, launcherClientConfig.frontierUrl, launcherClientConfig.cutOffBootver);
+            launcherApp = new LauncherApp(storage, launcherClientConfig.frontierUrl, launcherClientConfig.cutOffBootver, isFirstLaunch);
             SDL.ShowWindow(window);
 
             var done = false;

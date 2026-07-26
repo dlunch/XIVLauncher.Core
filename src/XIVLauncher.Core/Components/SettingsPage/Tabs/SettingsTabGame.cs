@@ -1,6 +1,7 @@
 using Hexa.NET.ImGui;
 
 using XIVLauncher.Common;
+using XIVLauncher.Core.Configuration;
 using XIVLauncher.Core.Resources.Localization;
 
 namespace XIVLauncher.Core.Components.SettingsPage.Tabs;
@@ -9,6 +10,8 @@ public class SettingsTabGame : SettingsTab
 {
     public override SettingsEntry[] Entries { get; } =
     {
+        new SettingsEntry<GameRegion>("Game region", "Select the service region used for login, patching, and game launch.", () => Program.Config.GameRegion ?? GameRegion.Global, x => Program.Config.GameRegion = x),
+
         new SettingsEntry<DirectoryInfo>(Strings.GamePathSetting, Strings.GamePathSettingDescription, () => Program.Config.GamePath, x => Program.Config.GamePath = x)
         {
             CheckValidity = x =>
