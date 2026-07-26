@@ -33,7 +33,12 @@ public class OtpEntryPage : Page
             TryAcceptOtp(Program.Steam.GetEnteredGamepadText());
     }
 
-    public void Reset(int otpLength = 6)
+    public void Reset()
+    {
+        this.Reset(6);
+    }
+
+    public void Reset(int otpLength)
     {
         if (otpLength <= 0)
             throw new ArgumentOutOfRangeException(nameof(otpLength));
