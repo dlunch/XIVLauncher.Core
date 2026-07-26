@@ -17,6 +17,52 @@ public enum WineReleaseDistro
 
 public static class CompatUtil
 {
+    public static string FindMacOSWineBinPath()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return string.Empty;
+
+        var candidates = new List<string>();
+        var environmentPath = Environment.GetEnvironmentVariable("XL_WINE_BINARY_PATH");
+        if (!string.IsNullOrWhiteSpace(environmentPath))
+            candidates.Add(environmentPath);
+
+        var homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        AddWineBundleCandidates(
+            candidates,
+            Path.Combine(homeDirectory, "Applications", "Sikarugir"));
+        AddWineBundleCandidates(candidates, Path.Combine("/Applications", "Sikarugir"));
+
+        return candidates.FirstOrDefault(path =>
+                   Directory.Exists(path)
+                   && File.Exists(Path.Combine(path, "wine"))
+                   && File.Exists(Path.Combine(path, "wineserver")))
+               ?? string.Empty;
+    }
+
+    private static void AddWineBundleCandidates(ICollection<string> candidates, string rootDirectory)
+    {
+        if (!Directory.Exists(rootDirectory))
+            return;
+
+        try
+        {
+            foreach (var bundlePath in Directory.EnumerateDirectories(rootDirectory, "*.app"))
+            {
+                candidates.Add(
+                    Path.Combine(bundlePath, "Contents", "SharedSupport", "wine", "bin"));
+            }
+        }
+        catch (IOException)
+        {
+            // Ignore inaccessible or transient app bundle entries.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Ignore app bundle roots the current user cannot inspect.
+        }
+    }
+
     public static WineReleaseDistro GetWineIdForDistro()
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))

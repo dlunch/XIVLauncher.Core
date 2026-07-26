@@ -951,8 +951,9 @@ public class MainPage : Page
                 else if (!Directory.Exists(App.Settings.WineBinaryPath))
                     throw new InvalidOperationException("Custom wine binary path is invalid: no such directory.\n" +
                                                         "Check path carefully for typos: " + App.Settings.WineBinaryPath);
-                else if (!File.Exists(Path.Combine(App.Settings.WineBinaryPath, "wine64")))
-                    throw new InvalidOperationException("Custom wine binary path is invalid: no wine64 found at that location.\n" +
+                else if (!File.Exists(Path.Combine(App.Settings.WineBinaryPath, "wine64"))
+                         && !File.Exists(Path.Combine(App.Settings.WineBinaryPath, "wine")))
+                    throw new InvalidOperationException("Custom wine binary path is invalid: no wine64 or wine found at that location.\n" +
                                                         "Check path carefully for typos: " + App.Settings.WineBinaryPath);
 
                 Log.Information("Using Custom Wine: " + App.Settings.WineBinaryPath);
@@ -964,7 +965,7 @@ public class MainPage : Page
             Log.Information("Using Dxvk Version: " + App.Settings.DxvkVersion.ToString());
 
             var signal = new ManualResetEvent(false);
-            var isFailed = false;
+            Exception? compatibilityToolException = null;
 
             var _ = Task.Run(async () =>
             {
@@ -972,10 +973,18 @@ public class MainPage : Page
                 await Program.CompatibilityTools.EnsureTool(Program.HttpClient, tempPath).ConfigureAwait(false);
             }).ContinueWith(t =>
             {
-                isFailed = t.IsFaulted || t.IsCanceled;
-
-                if (isFailed)
+                if (t.IsCanceled)
+                {
+                    compatibilityToolException = new TaskCanceledException(
+                        "Preparing the Wine compatibility tool was cancelled.");
+                }
+                else if (t.IsFaulted)
+                {
+                    compatibilityToolException = t.Exception?.GetBaseException()
+                                                 ?? new InvalidOperationException(
+                                                     "Preparing the Wine compatibility tool failed.");
                     Log.Error(t.Exception, "Couldn't ensure compatibility tool");
+                }
 
                 signal.Set();
             });
@@ -984,8 +993,12 @@ public class MainPage : Page
             signal.WaitOne();
             signal.Dispose();
 
-            if (isFailed)
-                return null!;
+            if (compatibilityToolException != null)
+            {
+                throw new InvalidOperationException(
+                    "Could not prepare the Wine compatibility tool.",
+                    compatibilityToolException);
+            }
 
             App.StartLoading(Strings.StartingGame, Strings.HaveFun);
 
