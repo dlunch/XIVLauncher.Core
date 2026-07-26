@@ -245,17 +245,37 @@ public class CompatibilityTools
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             return;
 
-        // macOS Wine bundles such as Sikarugir keep dylibs in Contents/Frameworks
-        // instead of next to Contents/SharedSupport/wine/bin.
-        var frameworksPath = Path.GetFullPath(
-            Path.Combine(WineBinPath, "..", "..", "..", "Frameworks"));
-        if (!Directory.Exists(frameworksPath))
+        var libraryPaths = new List<string>();
+        var wineLibraryPath = Path.GetFullPath(Path.Combine(WineBinPath, "..", "lib"));
+        if (Directory.Exists(wineLibraryPath))
+            libraryPaths.Add(wineLibraryPath);
+
+        var currentDirectory = new DirectoryInfo(WineBinPath);
+        while (currentDirectory != null
+               && !string.Equals(
+                   currentDirectory.Name,
+                   "Contents",
+                   StringComparison.OrdinalIgnoreCase))
+        {
+            currentDirectory = currentDirectory.Parent;
+        }
+
+        if (currentDirectory != null)
+        {
+            var frameworksPath = Path.Combine(currentDirectory.FullName, "Frameworks");
+            if (Directory.Exists(frameworksPath))
+                libraryPaths.Add(frameworksPath);
+        }
+
+        if (libraryPaths.Count == 0)
             return;
 
         var existingPath = Environment.GetEnvironmentVariable("DYLD_FALLBACK_LIBRARY_PATH");
-        environment["DYLD_FALLBACK_LIBRARY_PATH"] = string.IsNullOrEmpty(existingPath)
-                                                        ? frameworksPath
-                                                        : $"{frameworksPath}:{existingPath}";
+        if (!string.IsNullOrEmpty(existingPath))
+            libraryPaths.Add(existingPath);
+
+        environment["DYLD_FALLBACK_LIBRARY_PATH"] =
+            string.Join(Path.PathSeparator, libraryPaths.Distinct(StringComparer.Ordinal));
     }
 
     public int[] GetProcessIds(string executableName)

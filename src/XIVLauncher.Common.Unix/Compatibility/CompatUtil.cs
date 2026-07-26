@@ -17,6 +17,12 @@ public enum WineReleaseDistro
 
 public static class CompatUtil
 {
+    private static readonly string[] MacOSWineBundleBinPaths =
+    [
+        Path.Combine("Contents", "SharedSupport", "wine", "bin"),
+        Path.Combine("Contents", "Resources", "wine", "bin"),
+    ];
+
     public static string FindMacOSWineBinPath()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
@@ -27,17 +33,27 @@ public static class CompatUtil
         if (!string.IsNullOrWhiteSpace(environmentPath))
             candidates.Add(environmentPath);
 
-        var homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        AddWineBundleCandidates(
-            candidates,
-            Path.Combine(homeDirectory, "Applications", "Sikarugir"));
-        AddWineBundleCandidates(candidates, Path.Combine("/Applications", "Sikarugir"));
+        var searchPath = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrWhiteSpace(searchPath))
+            candidates.AddRange(
+                searchPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
 
-        return candidates.FirstOrDefault(path =>
-                   Directory.Exists(path)
-                   && File.Exists(Path.Combine(path, "wine"))
-                   && File.Exists(Path.Combine(path, "wineserver")))
+        var homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        AddWineBundleCandidates(candidates, Path.Combine(homeDirectory, "Applications"));
+        AddWineBundleCandidates(candidates, "/Applications");
+
+        return candidates
+               .Distinct(StringComparer.Ordinal)
+               .FirstOrDefault(IsWineBinPath)
                ?? string.Empty;
+    }
+
+    public static bool IsWineBinPath(string path)
+    {
+        return Directory.Exists(path)
+               && (File.Exists(Path.Combine(path, "wine64"))
+                   || File.Exists(Path.Combine(path, "wine")))
+               && File.Exists(Path.Combine(path, "wineserver"));
     }
 
     private static void AddWineBundleCandidates(ICollection<string> candidates, string rootDirectory)
@@ -45,22 +61,48 @@ public static class CompatUtil
         if (!Directory.Exists(rootDirectory))
             return;
 
+        foreach (var entryPath in GetDirectoriesOrEmpty(rootDirectory))
+        {
+            if (string.Equals(
+                    Path.GetExtension(entryPath),
+                    ".app",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                AddWineBundleLayoutCandidates(candidates, entryPath);
+                continue;
+            }
+
+            // Package managers commonly group generated app wrappers one level
+            // below ~/Applications or /Applications.
+            foreach (var bundlePath in GetDirectoriesOrEmpty(entryPath, "*.app"))
+                AddWineBundleLayoutCandidates(candidates, bundlePath);
+        }
+    }
+
+    private static IEnumerable<string> GetDirectoriesOrEmpty(
+        string rootDirectory,
+        string searchPattern = "*")
+    {
         try
         {
-            foreach (var bundlePath in Directory.EnumerateDirectories(rootDirectory, "*.app"))
-            {
-                candidates.Add(
-                    Path.Combine(bundlePath, "Contents", "SharedSupport", "wine", "bin"));
-            }
+            return Directory.GetDirectories(rootDirectory, searchPattern);
         }
         catch (IOException)
         {
-            // Ignore inaccessible or transient app bundle entries.
+            return [];
         }
         catch (UnauthorizedAccessException)
         {
-            // Ignore app bundle roots the current user cannot inspect.
+            return [];
         }
+    }
+
+    private static void AddWineBundleLayoutCandidates(
+        ICollection<string> candidates,
+        string bundlePath)
+    {
+        foreach (var relativeBinPath in MacOSWineBundleBinPaths)
+            candidates.Add(Path.Combine(bundlePath, relativeBinPath));
     }
 
     public static WineReleaseDistro GetWineIdForDistro()
