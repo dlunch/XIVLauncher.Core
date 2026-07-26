@@ -1082,11 +1082,16 @@ public class MainPage : Page
             throw;
         }
 
-        Log.Debug("Waiting for game to exit");
+        var gameStartedAt = Stopwatch.GetTimestamp();
+        Log.Information("Game process {ProcessId} started; waiting for exit", launchedProcess.Id);
 
         await Task.Run(() => launchedProcess!.WaitForExit()).ConfigureAwait(false);
 
-        Log.Verbose("Game has exited");
+        Log.Information(
+            "Game process {ProcessId} exited with code {ExitCode} after {Elapsed}",
+            launchedProcess.Id,
+            launchedProcess.ExitCode,
+            Stopwatch.GetElapsedTime(gameStartedAt));
 
         if (addonMgr.IsRunning)
             addonMgr.StopAddons();

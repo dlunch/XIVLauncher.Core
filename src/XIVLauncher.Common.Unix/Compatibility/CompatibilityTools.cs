@@ -44,6 +44,7 @@ public class CompatibilityTools
     private readonly DxvkHudType hudType;
     private readonly bool gamemodeOn;
     private readonly string dxvkAsyncOn;
+    private string? macOSBundledDxvkPath;
 
     public bool IsToolReady { get; private set; }
     public WineSettings Settings { get; private set; }
@@ -129,20 +130,23 @@ public class CompatibilityTools
         if (!Directory.Exists(bundledDxvkPath))
             return false;
 
-        var system32Path = Path.Combine(Settings.Prefix.FullName, "drive_c", "windows", "system32");
         var wineBuiltinPath = Path.GetFullPath(
             Path.Combine(WineBinPath, "..", "lib", "wine", "x86_64-windows"));
         var rendererDlls = new[] { "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll" };
 
+        // Sikarugir packages its DXVK DLLs as Wine builtin modules. They must be
+        // selected through WINEDLLPATH; copying them into system32 makes Wine try
+        // (and reject) them as native Windows DLLs before falling back to WineD3D.
+        // Restore any files copied there by older launcher builds.
+        var system32Path = Path.Combine(Settings.Prefix.FullName, "drive_c", "windows", "system32");
         foreach (var dll in rendererDlls)
         {
-            var bundledDll = Path.Combine(bundledDxvkPath, dll);
             var builtinDll = Path.Combine(wineBuiltinPath, dll);
-            var source = File.Exists(bundledDll) ? bundledDll : builtinDll;
-            if (File.Exists(source))
-                File.Copy(source, Path.Combine(system32Path, dll), true);
+            if (File.Exists(builtinDll))
+                File.Copy(builtinDll, Path.Combine(system32Path, dll), true);
         }
 
+        this.macOSBundledDxvkPath = bundledDxvkPath;
         Log.Information("Using the DXVK renderer bundled with the custom macOS Wine app: {Path}",
             bundledDxvkPath);
         return true;
@@ -208,10 +212,13 @@ public class CompatibilityTools
 
         var ogl = wineD3D || this.dxvkVersion == DxvkVersion.Disabled;
 
+        var rendererOverride = this.macOSBundledDxvkPath != null
+            ? "b"
+            : (ogl ? "b" : "n,b");
         var wineEnviromentVariables = new Dictionary<string, string>
         {
             { "WINEPREFIX", Settings.Prefix.FullName },
-            { "WINEDLLOVERRIDES", $"{WINEDLLOVERRIDES}{(ogl ? "b" : "n,b")}" }
+            { "WINEDLLOVERRIDES", $"{WINEDLLOVERRIDES}{rendererOverride}" }
         };
 
         if (!string.IsNullOrEmpty(Settings.DebugVars))
@@ -297,7 +304,8 @@ public class CompatibilityTools
         {
             var frameworksPath = Path.Combine(currentDirectory.FullName, "Frameworks");
             var moltenVkCxPath = Path.Combine(frameworksPath, "moltenvkcx");
-            if (IsMacOSBundleOptionEnabled(currentDirectory, "MOLTENVKCX")
+            if (this.macOSBundledDxvkPath == null
+                && IsMacOSBundleOptionEnabled(currentDirectory, "MOLTENVKCX")
                 && Directory.Exists(moltenVkCxPath))
             {
                 libraryPaths.Add(moltenVkCxPath);
@@ -316,6 +324,21 @@ public class CompatibilityTools
 
         environment["DYLD_FALLBACK_LIBRARY_PATH"] =
             string.Join(Path.PathSeparator, libraryPaths.Distinct(StringComparer.Ordinal));
+
+        if (this.macOSBundledDxvkPath != null)
+        {
+            var wineDllPaths = new List<string> { this.macOSBundledDxvkPath };
+            var existingWineDllPath = Environment.GetEnvironmentVariable("WINEDLLPATH");
+            if (!string.IsNullOrEmpty(existingWineDllPath))
+                wineDllPaths.Add(existingWineDllPath);
+
+            environment["WINEDLLPATH"] =
+                string.Join(Path.PathSeparator, wineDllPaths.Distinct(StringComparer.Ordinal));
+            // CrossOver-derived Wine engines, including Sikarugir's, use this
+            // companion variable to put renderer modules ahead of their bundled
+            // WineD3D modules.
+            environment["WINEDLLPATH_PREPEND"] = this.macOSBundledDxvkPath;
+        }
     }
 
     private DirectoryInfo FindMacOSBundleContents()
