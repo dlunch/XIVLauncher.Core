@@ -17,6 +17,94 @@ public enum WineReleaseDistro
 
 public static class CompatUtil
 {
+    private static readonly string[] MacOSWineBundleBinPaths =
+    [
+        Path.Combine("Contents", "SharedSupport", "wine", "bin"),
+        Path.Combine("Contents", "Resources", "wine", "bin"),
+    ];
+
+    public static string FindMacOSWineBinPath()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return string.Empty;
+
+        var candidates = new List<string>();
+        var environmentPath = Environment.GetEnvironmentVariable("XL_WINE_BINARY_PATH");
+        if (!string.IsNullOrWhiteSpace(environmentPath))
+            candidates.Add(environmentPath);
+
+        var searchPath = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrWhiteSpace(searchPath))
+            candidates.AddRange(
+                searchPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
+
+        var homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        AddWineBundleCandidates(candidates, Path.Combine(homeDirectory, "Applications"));
+        AddWineBundleCandidates(candidates, "/Applications");
+
+        return candidates
+               .Distinct(StringComparer.Ordinal)
+               .FirstOrDefault(IsWineBinPath)
+               ?? string.Empty;
+    }
+
+    public static bool IsWineBinPath(string path)
+    {
+        return Directory.Exists(path)
+               && (File.Exists(Path.Combine(path, "wine64"))
+                   || File.Exists(Path.Combine(path, "wine")))
+               && File.Exists(Path.Combine(path, "wineserver"));
+    }
+
+    private static void AddWineBundleCandidates(ICollection<string> candidates, string rootDirectory)
+    {
+        if (!Directory.Exists(rootDirectory))
+            return;
+
+        foreach (var entryPath in GetDirectoriesOrEmpty(rootDirectory))
+        {
+            if (string.Equals(
+                    Path.GetExtension(entryPath),
+                    ".app",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                AddWineBundleLayoutCandidates(candidates, entryPath);
+                continue;
+            }
+
+            // Package managers commonly group generated app wrappers one level
+            // below ~/Applications or /Applications.
+            foreach (var bundlePath in GetDirectoriesOrEmpty(entryPath, "*.app"))
+                AddWineBundleLayoutCandidates(candidates, bundlePath);
+        }
+    }
+
+    private static IEnumerable<string> GetDirectoriesOrEmpty(
+        string rootDirectory,
+        string searchPattern = "*")
+    {
+        try
+        {
+            return Directory.GetDirectories(rootDirectory, searchPattern);
+        }
+        catch (IOException)
+        {
+            return [];
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private static void AddWineBundleLayoutCandidates(
+        ICollection<string> candidates,
+        string bundlePath)
+    {
+        foreach (var relativeBinPath in MacOSWineBundleBinPaths)
+            candidates.Add(Path.Combine(bundlePath, relativeBinPath));
+    }
+
     public static WineReleaseDistro GetWineIdForDistro()
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))

@@ -230,7 +230,12 @@ public class LauncherApp : Component
 
     public void AskForOtp()
     {
-        this.otpEntryPage.Reset();
+        this.AskForOtp(6);
+    }
+
+    public void AskForOtp(int otpLength)
+    {
+        this.otpEntryPage.Reset(otpLength);
         this.State = LauncherState.OtpEntry;
     }
 

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 using Serilog;
@@ -28,7 +29,14 @@ public class CompatibilityTools
     private string WineBinPath => Settings.StartupType == WineStartupType.Managed ?
                                     Path.Combine(wineDirectory.FullName, Settings.Release.Name, "bin") :
                                     Settings.CustomBinPath;
-    private string Wine64Path => Path.Combine(WineBinPath, "wine64");
+    private string WineExecutablePath
+    {
+        get
+        {
+            var wine64Path = Path.Combine(WineBinPath, "wine64");
+            return File.Exists(wine64Path) ? wine64Path : Path.Combine(WineBinPath, "wine");
+        }
+    }
     private string WineServerPath => Path.Combine(WineBinPath, "wineserver");
 
     private readonly DxvkVersion dxvkVersion;
@@ -38,7 +46,7 @@ public class CompatibilityTools
 
     public bool IsToolReady { get; private set; }
     public WineSettings Settings { get; private set; }
-    public bool IsToolDownloaded => File.Exists(Wine64Path) && Settings.Prefix.Exists;
+    public bool IsToolDownloaded => File.Exists(WineExecutablePath) && Settings.Prefix.Exists;
 
     public CompatibilityTools(WineSettings wineSettings, DxvkVersion dxvkVersion, DxvkHudType hudType, bool gamemodeOn, bool dxvkAsyncOn, DirectoryInfo toolsFolder)
     {
@@ -80,8 +88,15 @@ public class CompatibilityTools
 
     public async Task EnsureTool(HttpClient httpClient, DirectoryInfo tempPath)
     {
-        if (!File.Exists(Wine64Path))
+        if (!File.Exists(WineExecutablePath))
         {
+            if (Settings.StartupType == WineStartupType.Managed
+                && RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                throw new PlatformNotSupportedException(
+                    "Managed Wine is not available for macOS. Select Custom Wine and choose a directory containing wine and wineserver.");
+            }
+
             Log.Information($"Compatibility tool does not exist, downloading {Settings.Release.DownloadUrl}");
             await DownloadTool(httpClient, tempPath).ConfigureAwait(false);
         }
@@ -112,7 +127,7 @@ public class CompatibilityTools
 
     public Process RunInPrefix(string command, string workingDirectory = "", IDictionary<string, string> environment = null, bool redirectOutput = false, bool writeLog = false, bool wineD3D = false)
     {
-        var psi = new ProcessStartInfo(Wine64Path);
+        var psi = new ProcessStartInfo(WineExecutablePath);
         psi.Arguments = command;
 
         Log.Verbose("Running in prefix: {FileName} {Arguments}", psi.FileName, command);
@@ -121,7 +136,7 @@ public class CompatibilityTools
 
     public Process RunInPrefix(string[] args, string workingDirectory = "", IDictionary<string, string> environment = null, bool redirectOutput = false, bool writeLog = false, bool wineD3D = false)
     {
-        var psi = new ProcessStartInfo(Wine64Path);
+        var psi = new ProcessStartInfo(WineExecutablePath);
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
 
@@ -181,6 +196,7 @@ public class CompatibilityTools
 
         wineEnviromentVariables.Add("DXVK_HUD", dxvkHud);
         wineEnviromentVariables.Add("DXVK_ASYNC", dxvkAsyncOn);
+        AddMacOSBundleEnvironment(wineEnviromentVariables);
         switch (Settings.SyncType)
         {
             case WineSyncType.ESync:
@@ -222,6 +238,44 @@ public class CompatibilityTools
             helperProcess.BeginErrorReadLine();
 
         return helperProcess;
+    }
+
+    private void AddMacOSBundleEnvironment(IDictionary<string, string> environment)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return;
+
+        var libraryPaths = new List<string>();
+        var wineLibraryPath = Path.GetFullPath(Path.Combine(WineBinPath, "..", "lib"));
+        if (Directory.Exists(wineLibraryPath))
+            libraryPaths.Add(wineLibraryPath);
+
+        var currentDirectory = new DirectoryInfo(WineBinPath);
+        while (currentDirectory != null
+               && !string.Equals(
+                   currentDirectory.Name,
+                   "Contents",
+                   StringComparison.OrdinalIgnoreCase))
+        {
+            currentDirectory = currentDirectory.Parent;
+        }
+
+        if (currentDirectory != null)
+        {
+            var frameworksPath = Path.Combine(currentDirectory.FullName, "Frameworks");
+            if (Directory.Exists(frameworksPath))
+                libraryPaths.Add(frameworksPath);
+        }
+
+        if (libraryPaths.Count == 0)
+            return;
+
+        var existingPath = Environment.GetEnvironmentVariable("DYLD_FALLBACK_LIBRARY_PATH");
+        if (!string.IsNullOrEmpty(existingPath))
+            libraryPaths.Add(existingPath);
+
+        environment["DYLD_FALLBACK_LIBRARY_PATH"] =
+            string.Join(Path.PathSeparator, libraryPaths.Distinct(StringComparer.Ordinal));
     }
 
     public int[] GetProcessIds(string executableName)
@@ -271,6 +325,9 @@ public class CompatibilityTools
             Arguments = "-k"
         };
         psi.EnvironmentVariables.Add("WINEPREFIX", Settings.Prefix.FullName);
+        var environment = new Dictionary<string, string>();
+        AddMacOSBundleEnvironment(environment);
+        MergeDictionaries(psi.EnvironmentVariables, environment);
 
         Process.Start(psi);
     }
