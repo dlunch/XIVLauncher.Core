@@ -72,19 +72,22 @@ public class SettingsEntry<T> : SettingsEntry
         {
             ImGuiHelpers.TextWrapped(this.Name);
 
-            var idx = (int)(this.InternalValue ?? 0);
-            var values = Enum.GetValues(type);
-            var descriptions = values.Cast<Enum>().Select(x => x.GetAttribute<SettingsDescriptionAttribute>() ?? new SettingsDescriptionAttribute(x.ToString(), string.Empty)).ToArray();
+            var values = Enum.GetValues(type).Cast<Enum>().ToArray();
+            var descriptions = values.Select(x => x.GetAttribute<SettingsDescriptionAttribute>() ?? new SettingsDescriptionAttribute(x.ToString(), string.Empty)).ToArray();
+            var currentValue = this.InternalValue as Enum;
+            var idx = Array.FindIndex(values, x => EqualityComparer<Enum>.Default.Equals(x, currentValue));
+            if (idx < 0)
+                idx = 0;
 
             if (ImGui.BeginCombo($"###{Id.ToString()}", descriptions[idx].FriendlyName))
             {
-                foreach (int value in values)
+                for (var i = 0; i < values.Length; i++)
                 {
-                    string desc = descriptions[value].Description;
+                    string desc = descriptions[i].Description;
                     desc = (desc == string.Empty || desc == "dummy") ? string.Empty : " - " + desc;
-                    if (ImGui.Selectable(descriptions[value].FriendlyName + desc, idx == value))
+                    if (ImGui.Selectable(descriptions[i].FriendlyName + desc, idx == i))
                     {
-                        this.InternalValue = value;
+                        this.InternalValue = values[i];
                     }
                 }
 
