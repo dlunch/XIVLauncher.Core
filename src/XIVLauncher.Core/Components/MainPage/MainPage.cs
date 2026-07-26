@@ -1000,6 +1000,9 @@ public class MainPage : Page
                     compatibilityToolException);
             }
 
+            if (koreanGameToken != null)
+                Program.CompatibilityTools.EnsureKoreanFontFallback();
+
             App.StartLoading(Strings.StartingGame, Strings.HaveFun);
 
             runner = new UnixGameRunner(Program.CompatibilityTools, dalamudLauncher, dalamudOk);

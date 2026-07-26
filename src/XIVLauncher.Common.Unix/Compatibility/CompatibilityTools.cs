@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 using Serilog;
 
@@ -102,9 +103,49 @@ public class CompatibilityTools
         }
 
         EnsurePrefix();
-        await Dxvk.Dxvk.InstallDxvk(httpClient, Settings.Prefix, dxvkDirectory, dxvkVersion).ConfigureAwait(false);
+        if (!TryInstallMacOSBundledDxvk())
+            await Dxvk.Dxvk.InstallDxvk(httpClient, Settings.Prefix, dxvkDirectory, dxvkVersion).ConfigureAwait(false);
 
         IsToolReady = true;
+    }
+
+    private bool TryInstallMacOSBundledDxvk()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+            || Settings.StartupType != WineStartupType.Custom
+            || dxvkVersion == DxvkVersion.Disabled)
+        {
+            return false;
+        }
+
+        var contentsDirectory = FindMacOSBundleContents();
+        if (contentsDirectory == null)
+            return false;
+
+        // macOS Wine bundles commonly ship a MoltenVK-compatible DXVK build. Linux DXVK
+        // releases can load on macOS but then hang or fail while creating the D3D device.
+        var bundledDxvkPath = Path.Combine(
+            contentsDirectory.FullName, "Frameworks", "renderer", "dxvk", "wine", "x86_64-windows");
+        if (!Directory.Exists(bundledDxvkPath))
+            return false;
+
+        var system32Path = Path.Combine(Settings.Prefix.FullName, "drive_c", "windows", "system32");
+        var wineBuiltinPath = Path.GetFullPath(
+            Path.Combine(WineBinPath, "..", "lib", "wine", "x86_64-windows"));
+        var rendererDlls = new[] { "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll" };
+
+        foreach (var dll in rendererDlls)
+        {
+            var bundledDll = Path.Combine(bundledDxvkPath, dll);
+            var builtinDll = Path.Combine(wineBuiltinPath, dll);
+            var source = File.Exists(bundledDll) ? bundledDll : builtinDll;
+            if (File.Exists(source))
+                File.Copy(source, Path.Combine(system32Path, dll), true);
+        }
+
+        Log.Information("Using the DXVK renderer bundled with the custom macOS Wine app: {Path}",
+            bundledDxvkPath);
+        return true;
     }
 
     private async Task DownloadTool(HttpClient httpClient, DirectoryInfo tempPath)
@@ -250,19 +291,18 @@ public class CompatibilityTools
         if (Directory.Exists(wineLibraryPath))
             libraryPaths.Add(wineLibraryPath);
 
-        var currentDirectory = new DirectoryInfo(WineBinPath);
-        while (currentDirectory != null
-               && !string.Equals(
-                   currentDirectory.Name,
-                   "Contents",
-                   StringComparison.OrdinalIgnoreCase))
-        {
-            currentDirectory = currentDirectory.Parent;
-        }
+        var currentDirectory = FindMacOSBundleContents();
 
         if (currentDirectory != null)
         {
             var frameworksPath = Path.Combine(currentDirectory.FullName, "Frameworks");
+            var moltenVkCxPath = Path.Combine(frameworksPath, "moltenvkcx");
+            if (IsMacOSBundleOptionEnabled(currentDirectory, "MOLTENVKCX")
+                && Directory.Exists(moltenVkCxPath))
+            {
+                libraryPaths.Add(moltenVkCxPath);
+            }
+
             if (Directory.Exists(frameworksPath))
                 libraryPaths.Add(frameworksPath);
         }
@@ -276,6 +316,76 @@ public class CompatibilityTools
 
         environment["DYLD_FALLBACK_LIBRARY_PATH"] =
             string.Join(Path.PathSeparator, libraryPaths.Distinct(StringComparer.Ordinal));
+    }
+
+    private DirectoryInfo FindMacOSBundleContents()
+    {
+        var currentDirectory = new DirectoryInfo(WineBinPath);
+        while (currentDirectory != null
+               && !string.Equals(
+                   currentDirectory.Name,
+                   "Contents",
+                   StringComparison.OrdinalIgnoreCase))
+        {
+            currentDirectory = currentDirectory.Parent;
+        }
+
+        return currentDirectory;
+    }
+
+    private static bool IsMacOSBundleOptionEnabled(DirectoryInfo contentsDirectory, string option)
+    {
+        var infoPlist = Path.Combine(contentsDirectory.FullName, "Info.plist");
+        if (!File.Exists(infoPlist))
+            return false;
+
+        try
+        {
+            var values = XDocument.Load(infoPlist)
+                .Descendants("dict")
+                .FirstOrDefault()?
+                .Elements()
+                .ToList();
+            if (values == null)
+                return false;
+
+            for (var i = 0; i + 1 < values.Count; i++)
+            {
+                if (values[i].Name == "key"
+                    && values[i].Value == option)
+                {
+                    return values[i + 1].Name == "true"
+                           || (values[i + 1].Name == "integer" && values[i + 1].Value == "1");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not read macOS Wine bundle option {Option}", option);
+        }
+
+        return false;
+    }
+
+    public void EnsureKoreanFontFallback()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return;
+
+        const string fontSubstitutes =
+            @"HKLM\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes";
+        var replacements = new Dictionary<string, string>
+        {
+            { "MS Shell Dlg", "NanumGothic" },
+            { "MS Shell Dlg 2", "NanumGothic" },
+            { "Gulim", "NanumGothic" },
+            { "GulimChe", "NanumGothic" },
+            { "Malgun Gothic", "NanumGothic" },
+            { "Malgun Gothic Semilight", "NanumGothic" },
+        };
+
+        foreach (var replacement in replacements)
+            AddRegistryKey(fontSubstitutes, replacement.Key, replacement.Value);
     }
 
     public int[] GetProcessIds(string executableName)
