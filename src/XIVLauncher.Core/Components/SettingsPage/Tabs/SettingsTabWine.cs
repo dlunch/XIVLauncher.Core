@@ -38,6 +38,9 @@ public class SettingsTabWine : SettingsTab
             {
                 CheckValidity = b =>
                 {
+                    if (b != WineSyncType.FSync)
+                        return null;
+
                     switch (WineUtility.SystemFsyncSupport())
                     {
                         case FsyncSupport.UnsupportedPlatform:
