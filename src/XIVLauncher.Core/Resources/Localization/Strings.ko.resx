@@ -571,4 +571,43 @@ ReShade를 사용 중이었다면, 다시 설치해야 합니다.</value>
   <data name="EnableFsyncSettingUnsupportedPlatformValidation" xml:space="preserve">
         <value>FSync는 Linux에서만 사용할 수 있습니다</value>
     </data>
+  <data name="MacOSMetalFxSpatialSetting" xml:space="preserve">
+        <value>MetalFX 공간 업스케일링</value>
+    </data>
+  <data name="MacOSMetalFxSpatialSettingDescription" xml:space="preserve">
+        <value>macOS에서 절반 해상도로 렌더링한 뒤 MetalFX로 확대하여 프레임을 높입니다. 화질은 낮아질 수 있습니다.</value>
+    </data>
+  <data name="MacOSMetalPerformanceHudSetting" xml:space="preserve">
+        <value>Metal 성능 HUD</value>
+    </data>
+  <data name="MacOSMetalPerformanceHudSettingDescription" xml:space="preserve">
+        <value>게임 실행 중 Apple Metal 성능 오버레이를 표시합니다.</value>
+    </data>
+  <data name="GameConfigBackupTitle" xml:space="preserve">
+        <value>공식 런처 호환 설정 백업</value>
+    </data>
+  <data name="GameConfigBackupDescription" xml:space="preserve">
+        <value>공식 Windows 및 macOS 런처와 호환되는 FFXIVconfig.fea 파일을 내보내거나 가져옵니다. 시스템별 그래픽 설정과 스크린샷은 포함되지 않습니다.</value>
+    </data>
+  <data name="GameConfigBackupPreserveNewer" xml:space="preserve">
+        <value>현재 파일이 가져올 백업보다 새로우면 유지</value>
+    </data>
+  <data name="GameConfigBackupExport" xml:space="preserve">
+        <value>FFXIVconfig.fea 내보내기</value>
+    </data>
+  <data name="GameConfigBackupImport" xml:space="preserve">
+        <value>FFXIVconfig.fea 가져오기</value>
+    </data>
+  <data name="GameConfigBackupPathMissing" xml:space="preserve">
+        <value>게임 설정 경로가 지정되지 않았습니다.</value>
+    </data>
+  <data name="GameConfigBackupFailed" xml:space="preserve">
+        <value>설정 백업 작업에 실패했습니다: {0}</value>
+    </data>
+  <data name="GameConfigBackupExported" xml:space="preserve">
+        <value>캐릭터 {0}개와 파일 {1}개를 {2}에 내보냈습니다.</value>
+    </data>
+  <data name="GameConfigBackupImported" xml:space="preserve">
+        <value>파일 {0}개를 가져오고 더 새로운 파일 {1}개를 유지했습니다. 안전 백업: {2}</value>
+    </data>
 </root>

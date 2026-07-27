@@ -57,6 +57,8 @@ public class CompatibilityTools
     private readonly DxvkHudType hudType;
     private readonly bool gamemodeOn;
     private readonly string dxvkAsyncOn;
+    private readonly bool macOSMetalFxSpatialOn;
+    private readonly bool macOSMetalPerformanceHudOn;
     private string? macOSBundledRendererRootPath;
     private string? macOSBundledRendererWindowsPath;
     private bool macOSBundledDxmt;
@@ -66,13 +68,23 @@ public class CompatibilityTools
     public WineSettings Settings { get; private set; }
     public bool IsToolDownloaded => File.Exists(WineExecutablePath) && Settings.Prefix.Exists;
 
-    public CompatibilityTools(WineSettings wineSettings, DxvkVersion dxvkVersion, DxvkHudType hudType, bool gamemodeOn, bool dxvkAsyncOn, DirectoryInfo toolsFolder)
+    public CompatibilityTools(
+        WineSettings wineSettings,
+        DxvkVersion dxvkVersion,
+        DxvkHudType hudType,
+        bool gamemodeOn,
+        bool dxvkAsyncOn,
+        bool macOSMetalFxSpatialOn,
+        bool macOSMetalPerformanceHudOn,
+        DirectoryInfo toolsFolder)
     {
         this.Settings = wineSettings;
         this.dxvkVersion = dxvkVersion;
         this.hudType = hudType;
         this.gamemodeOn = gamemodeOn;
         this.dxvkAsyncOn = dxvkAsyncOn ? "1" : "0";
+        this.macOSMetalFxSpatialOn = macOSMetalFxSpatialOn;
+        this.macOSMetalPerformanceHudOn = macOSMetalPerformanceHudOn;
 
         this.wineDirectory = new DirectoryInfo(Path.Combine(toolsFolder.FullName, "wine"));
         this.dxvkDirectory = new DirectoryInfo(Path.Combine(toolsFolder.FullName, "dxvk"));
@@ -469,12 +481,16 @@ public class CompatibilityTools
 
         if (this.macOSBundledDxmt)
         {
-            // Match XIV on Mac's conservative DXMT defaults. Upscaling is disabled;
-            // users retain control of resolution and the game's own frame limiter.
+            // Match XIV on Mac's DXMT settings. MetalFX spatial upscaling is opt-in
+            // because it trades image quality for a substantial reduction in GPU load.
+            var spatialFactor = this.macOSMetalFxSpatialOn ? "2.0" : "1.0";
             environment["DXMT_CONFIG"] =
-                "d3d11.metalSpatialUpscaleFactor=1.0;d3d11.preferredMaxFrameRate=0;";
+                $"d3d11.metalSpatialUpscaleFactor={spatialFactor};d3d11.preferredMaxFrameRate=0;";
             environment["DXMT_ENABLE_NVEXT"] = "1";
-            environment["DXMT_METALFX_SPATIAL_SWAPCHAIN"] = "0";
+            environment["DXMT_METALFX_SPATIAL_SWAPCHAIN"] =
+                this.macOSMetalFxSpatialOn ? "1" : "0";
+            environment["MTL_HUD_ENABLED"] =
+                this.macOSMetalPerformanceHudOn ? "1" : "0";
             environment["MVK_CONFIG_FAST_MATH_ENABLED"] = "0";
             environment["MVK_CONFIG_RESUME_LOST_DEVICE"] = "1";
             environment["LANG"] = "en_US";

@@ -62,6 +62,26 @@ public class SettingsTabWine : SettingsTab
             {
                 CheckVisibility = () => dxvkVersionSetting.Value != DxvkVersion.Disabled
             },
+            new SettingsEntry<bool>(
+                Strings.MacOSMetalFxSpatialSetting,
+                Strings.MacOSMetalFxSpatialSettingDescription,
+                () => Program.Config.MacOSMetalFxSpatialEnabled ?? false,
+                b => Program.Config.MacOSMetalFxSpatialEnabled = b)
+            {
+                CheckVisibility = () =>
+                    RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                    && dxvkVersionSetting.Value != DxvkVersion.Disabled
+            },
+            new SettingsEntry<bool>(
+                Strings.MacOSMetalPerformanceHudSetting,
+                Strings.MacOSMetalPerformanceHudSettingDescription,
+                () => Program.Config.MacOSMetalPerformanceHudEnabled ?? false,
+                b => Program.Config.MacOSMetalPerformanceHudEnabled = b)
+            {
+                CheckVisibility = () =>
+                    RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                    && dxvkVersionSetting.Value != DxvkVersion.Disabled
+            },
 
             // GameMode
             new SettingsEntry<bool>(Strings.EnableFeralGameModeSetting, Strings.EnableFeralGameModeSettingDescription, () => Program.Config.GameModeEnabled ?? true, b => Program.Config.GameModeEnabled = b)

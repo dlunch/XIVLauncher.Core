@@ -1064,5 +1064,83 @@ namespace XIVLauncher.Core.Resources.Localization {
                 return ResourceManager.GetString("EnableFsyncSettingUnsupportedPlatformValidation", resourceCulture);
             }
         }
+
+        internal static string MacOSMetalFxSpatialSetting {
+            get {
+                return ResourceManager.GetString("MacOSMetalFxSpatialSetting", resourceCulture);
+            }
+        }
+
+        internal static string MacOSMetalFxSpatialSettingDescription {
+            get {
+                return ResourceManager.GetString("MacOSMetalFxSpatialSettingDescription", resourceCulture);
+            }
+        }
+
+        internal static string MacOSMetalPerformanceHudSetting {
+            get {
+                return ResourceManager.GetString("MacOSMetalPerformanceHudSetting", resourceCulture);
+            }
+        }
+
+        internal static string MacOSMetalPerformanceHudSettingDescription {
+            get {
+                return ResourceManager.GetString("MacOSMetalPerformanceHudSettingDescription", resourceCulture);
+            }
+        }
+
+        internal static string GameConfigBackupTitle {
+            get {
+                return ResourceManager.GetString("GameConfigBackupTitle", resourceCulture);
+            }
+        }
+
+        internal static string GameConfigBackupDescription {
+            get {
+                return ResourceManager.GetString("GameConfigBackupDescription", resourceCulture);
+            }
+        }
+
+        internal static string GameConfigBackupPreserveNewer {
+            get {
+                return ResourceManager.GetString("GameConfigBackupPreserveNewer", resourceCulture);
+            }
+        }
+
+        internal static string GameConfigBackupExport {
+            get {
+                return ResourceManager.GetString("GameConfigBackupExport", resourceCulture);
+            }
+        }
+
+        internal static string GameConfigBackupImport {
+            get {
+                return ResourceManager.GetString("GameConfigBackupImport", resourceCulture);
+            }
+        }
+
+        internal static string GameConfigBackupPathMissing {
+            get {
+                return ResourceManager.GetString("GameConfigBackupPathMissing", resourceCulture);
+            }
+        }
+
+        internal static string GameConfigBackupFailed {
+            get {
+                return ResourceManager.GetString("GameConfigBackupFailed", resourceCulture);
+            }
+        }
+
+        internal static string GameConfigBackupExported {
+            get {
+                return ResourceManager.GetString("GameConfigBackupExported", resourceCulture);
+            }
+        }
+
+        internal static string GameConfigBackupImported {
+            get {
+                return ResourceManager.GetString("GameConfigBackupImported", resourceCulture);
+            }
+        }
     }
 }
