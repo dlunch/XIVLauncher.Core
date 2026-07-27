@@ -41,6 +41,7 @@ sealed class Program
     private static string[] mainArgs = [];
     private static LauncherApp launcherApp = null!;
     private static unsafe SDLWindow* window = null!;
+    public static unsafe SDLWindow* Window => window;
     private static unsafe SDLGPUDevice* gpuDevice = null!;
     public static unsafe SDLGPUDevice* GPUDevice => gpuDevice;
     private static ImGuiBindings guiBindings = null!;
@@ -131,27 +132,14 @@ sealed class Program
         Config.GameModeEnabled ??= false;
         Config.DxvkVersion ??= DxvkVersion.Stable;
         Config.DxvkAsyncEnabled ??= true;
+        Config.MacOSMetalFxSpatialEnabled ??= false;
+        Config.MacOSMetalPerformanceHudEnabled ??= false;
 
         Config.WineStartupType ??= WineStartupType.Managed;
         Config.WineManagedVersion ??= WineManagedVersion.Stable;
         Config.WineSyncType ??= WineUtility.SystemFsyncSupport() == FsyncSupport.Supported ? WineSyncType.FSync : WineSyncType.ESync;
         Config.WineBinaryPath ??= "/usr/bin";
         Config.WineDebugVars ??= "-all";
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-            && Config.WineStartupType == WineStartupType.Managed)
-        {
-            var macOSWineBinPath = CompatUtil.FindMacOSWineBinPath();
-            if (!string.IsNullOrEmpty(macOSWineBinPath))
-            {
-                Log.Information(
-                    "Managed Wine is unavailable on macOS; using detected Wine bundle at {WineBinPath}",
-                    macOSWineBinPath);
-                Config.WineStartupType = WineStartupType.Custom;
-                Config.WineBinaryPath = macOSWineBinPath;
-                Config.WineSyncType = WineSyncType.ESync;
-            }
-        }
 
         Config.FixLDP ??= false;
         Config.FixIM ??= false;
@@ -381,7 +369,15 @@ sealed class Program
         var toolsFolder = storage.GetFolder("compatibilitytool");
         Directory.CreateDirectory(Path.Combine(toolsFolder.FullName, "dxvk"));
         Directory.CreateDirectory(Path.Combine(toolsFolder.FullName, "wine"));
-        CompatibilityTools = new CompatibilityTools(wineSettings, Config.DxvkVersion ?? DxvkVersion.Stable, Config.DxvkHudType, Config.GameModeEnabled ?? false, Config.DxvkAsyncEnabled ?? true, toolsFolder);
+        CompatibilityTools = new CompatibilityTools(
+            wineSettings,
+            Config.DxvkVersion ?? DxvkVersion.Stable,
+            Config.DxvkHudType,
+            Config.GameModeEnabled ?? false,
+            Config.DxvkAsyncEnabled ?? true,
+            Config.MacOSMetalFxSpatialEnabled ?? false,
+            Config.MacOSMetalPerformanceHudEnabled ?? false,
+            toolsFolder);
     }
 
     public static void ShowWindow()

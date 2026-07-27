@@ -1,3 +1,5 @@
+#nullable enable annotations
+
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
@@ -7,6 +9,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 using Serilog;
 
@@ -21,6 +24,17 @@ public class CompatibilityTools
     private const string WINEDLLOVERRIDES = "msquic=,mscoree=n,b;d3d9,d3d11,d3d10core,dxgi=";
     private const uint DXVK_CLEANUP_THRESHHOLD = 5;
     private const uint WINE_CLEANUP_THRESHHOLD = 5;
+    private static readonly (string FileName, string Checksum)[] MacOSDxmtDlls =
+    [
+        (
+            "d3d11.dll",
+            "a2d2f3f379649a234e0e74c18693621a801a9a83850339b2523b62eafefc30f5ad5a7d276ce5e474a472dcf1c0d1858e19281b7fded1c9847e53074c22ff926c"
+        ),
+        (
+            "dxgi.dll",
+            "f125effcc1242bb74e4ab3d6cd153e7e1db013ce0f06122b12c27dde01195f6b4acd9a7217d887da0702754172a1a01e8ea5862119c1107116fd392a1cdfbc94"
+        ),
+    ];
 
     private readonly DirectoryInfo wineDirectory;
     private readonly DirectoryInfo dxvkDirectory;
@@ -43,18 +57,34 @@ public class CompatibilityTools
     private readonly DxvkHudType hudType;
     private readonly bool gamemodeOn;
     private readonly string dxvkAsyncOn;
+    private readonly bool macOSMetalFxSpatialOn;
+    private readonly bool macOSMetalPerformanceHudOn;
+    private string? macOSBundledRendererRootPath;
+    private string? macOSBundledRendererWindowsPath;
+    private bool macOSBundledDxmt;
+    private bool macOSNativeDxmt;
 
     public bool IsToolReady { get; private set; }
     public WineSettings Settings { get; private set; }
     public bool IsToolDownloaded => File.Exists(WineExecutablePath) && Settings.Prefix.Exists;
 
-    public CompatibilityTools(WineSettings wineSettings, DxvkVersion dxvkVersion, DxvkHudType hudType, bool gamemodeOn, bool dxvkAsyncOn, DirectoryInfo toolsFolder)
+    public CompatibilityTools(
+        WineSettings wineSettings,
+        DxvkVersion dxvkVersion,
+        DxvkHudType hudType,
+        bool gamemodeOn,
+        bool dxvkAsyncOn,
+        bool macOSMetalFxSpatialOn,
+        bool macOSMetalPerformanceHudOn,
+        DirectoryInfo toolsFolder)
     {
         this.Settings = wineSettings;
         this.dxvkVersion = dxvkVersion;
         this.hudType = hudType;
         this.gamemodeOn = gamemodeOn;
         this.dxvkAsyncOn = dxvkAsyncOn ? "1" : "0";
+        this.macOSMetalFxSpatialOn = macOSMetalFxSpatialOn;
+        this.macOSMetalPerformanceHudOn = macOSMetalPerformanceHudOn;
 
         this.wineDirectory = new DirectoryInfo(Path.Combine(toolsFolder.FullName, "wine"));
         this.dxvkDirectory = new DirectoryInfo(Path.Combine(toolsFolder.FullName, "dxvk"));
@@ -90,21 +120,150 @@ public class CompatibilityTools
     {
         if (!File.Exists(WineExecutablePath))
         {
-            if (Settings.StartupType == WineStartupType.Managed
-                && RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                throw new PlatformNotSupportedException(
-                    "Managed Wine is not available for macOS. Select Custom Wine and choose a directory containing wine and wineserver.");
-            }
-
             Log.Information($"Compatibility tool does not exist, downloading {Settings.Release.DownloadUrl}");
             await DownloadTool(httpClient, tempPath).ConfigureAwait(false);
         }
 
+        // Select the macOS renderer before starting Wine for the first time.
+        // A Wine server inherits its environment when it starts and keeps it
+        // for the lifetime of the prefix, so detecting DXMT after EnsurePrefix
+        // leaves the server without WINEDLLPATH and the game never appears.
+        var useMacOSBundledRenderer = TryUseMacOSBundledRenderer();
+
+        Log.Information("Initializing Wine prefix");
         EnsurePrefix();
-        await Dxvk.Dxvk.InstallDxvk(httpClient, Settings.Prefix, dxvkDirectory, dxvkVersion).ConfigureAwait(false);
+        Log.Information("Wine prefix is initialized");
+        if (this.macOSNativeDxmt)
+            InstallManagedMacOSDxmt();
+        else if (!useMacOSBundledRenderer)
+            await Dxvk.Dxvk.InstallDxvk(httpClient, Settings.Prefix, dxvkDirectory, dxvkVersion).ConfigureAwait(false);
 
         IsToolReady = true;
+    }
+
+    private void InstallManagedMacOSDxmt()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+            || Settings.StartupType != WineStartupType.Managed
+            || this.macOSBundledRendererWindowsPath == null)
+        {
+            return;
+        }
+
+        var system32Path = Path.Combine(
+            Settings.Prefix.FullName,
+            "drive_c",
+            "windows",
+            "system32");
+        Directory.CreateDirectory(system32Path);
+        foreach (var (fileName, checksum) in MacOSDxmtDlls)
+        {
+            var sourcePath = Path.Combine(this.macOSBundledRendererWindowsPath, fileName);
+            if (!CompatUtil.EnsureChecksumMatch(sourcePath, [checksum]))
+                throw new InvalidDataException($"SHA512 checksum verification failed for {fileName}");
+
+            var targetPath = Path.Combine(system32Path, fileName);
+            if (!File.Exists(targetPath)
+                || !CompatUtil.EnsureChecksumMatch(targetPath, [checksum]))
+                File.Copy(sourcePath, targetPath, true);
+        }
+    }
+
+    private bool TryUseMacOSBundledRenderer()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+            || dxvkVersion == DxvkVersion.Disabled)
+        {
+            return false;
+        }
+
+        // XIV on Mac ships Wine/Winemetal and the native DXMT DLLs as one tested
+        // release. Keep those components paired: DXMT built for Wine 11 cannot
+        // be dropped into the older 9.12 runtime without missing GDI/D3DKMT APIs.
+        var managedRendererRoot = Path.GetFullPath(
+            Path.Combine(WineBinPath, "..", "lib", "wine"));
+        var managedRendererUnixPath =
+            Path.Combine(managedRendererRoot, "x86_64-unix");
+        var managedDxmtPath = Path.GetFullPath(
+            Path.Combine(WineBinPath, "..", "..", "dxmt"));
+        if (Settings.StartupType == WineStartupType.Managed
+            && File.Exists(Path.Combine(managedDxmtPath, "d3d11.dll"))
+            && File.Exists(Path.Combine(managedDxmtPath, "dxgi.dll"))
+            && File.Exists(Path.Combine(managedRendererUnixPath, "winemetal.so")))
+        {
+            macOSBundledRendererRootPath = managedRendererRoot;
+            macOSBundledRendererWindowsPath = managedDxmtPath;
+            macOSBundledDxmt = true;
+            macOSNativeDxmt = true;
+            Log.Information(
+                "Using the native DXMT renderer paired with managed macOS Wine: {Path}",
+                macOSBundledRendererWindowsPath);
+            return true;
+        }
+
+        if (Settings.StartupType != WineStartupType.Custom)
+            return false;
+
+        var contentsDirectory = FindMacOSBundleContents();
+        if (contentsDirectory == null)
+            return false;
+
+        var rendererRoot = Path.Combine(contentsDirectory.FullName, "Frameworks", "renderer");
+        var bundledDxmtWindowsPath =
+            Path.Combine(rendererRoot, "dxmt", "wine", "x86_64-windows");
+        var bundledDxmtUnixPath =
+            Path.Combine(rendererRoot, "dxmt", "wine", "x86_64-unix");
+        var bundledDxvkPath =
+            Path.Combine(rendererRoot, "dxvk", "wine", "x86_64-windows");
+
+        // XIV on Mac uses DXMT directly rather than translating D3D11 through Vulkan
+        // and MoltenVK. Prefer the same backend when the selected Wine bundle provides
+        // a complete DXMT pair. This also avoids the very large Metal allocations seen
+        // with Kegworks DXVK after FFXIV enters a fully loaded scene.
+        if (File.Exists(Path.Combine(bundledDxmtWindowsPath, "d3d11.dll"))
+            && File.Exists(Path.Combine(bundledDxmtWindowsPath, "dxgi.dll"))
+            && File.Exists(Path.Combine(bundledDxmtUnixPath, "winemetal.so")))
+        {
+            macOSBundledRendererRootPath = Path.Combine(rendererRoot, "dxmt", "wine");
+            macOSBundledRendererWindowsPath = bundledDxmtWindowsPath;
+            macOSBundledDxmt = true;
+        }
+        else if (Directory.Exists(bundledDxvkPath))
+        {
+            // Some bundles only ship a MoltenVK-compatible DXVK build. Linux DXVK
+            // releases can load on macOS but then hang while creating the D3D device.
+            macOSBundledRendererRootPath = bundledDxvkPath;
+            macOSBundledRendererWindowsPath = bundledDxvkPath;
+        }
+        else
+        {
+            return false;
+        }
+
+        var wineBuiltinPath = Path.GetFullPath(
+            Path.Combine(WineBinPath, "..", "lib", "wine", "x86_64-windows"));
+        var rendererDlls = new[] { "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll" };
+
+        // Sikarugir packages its DXVK DLLs as Wine builtin modules. They must be
+        // selected through WINEDLLPATH; copying them into system32 makes Wine try
+        // (and reject) them as native Windows DLLs before falling back to WineD3D.
+        // Restore any files copied there by older launcher builds.
+        var system32Path = Path.Combine(Settings.Prefix.FullName, "drive_c", "windows", "system32");
+        if (Directory.Exists(system32Path))
+        {
+            foreach (var dll in rendererDlls)
+            {
+                var builtinDll = Path.Combine(wineBuiltinPath, dll);
+                if (File.Exists(builtinDll))
+                    File.Copy(builtinDll, Path.Combine(system32Path, dll), true);
+            }
+        }
+
+        Log.Information(
+            "Using the {Renderer} renderer bundled with the custom macOS Wine app: {Path}",
+            macOSBundledDxmt ? "DXMT" : "DXVK",
+            macOSBundledRendererWindowsPath);
+        return true;
     }
 
     private async Task DownloadTool(HttpClient httpClient, DirectoryInfo tempPath)
@@ -167,10 +326,16 @@ public class CompatibilityTools
 
         var ogl = wineD3D || this.dxvkVersion == DxvkVersion.Disabled;
 
+        var rendererOverride = this.macOSBundledRendererWindowsPath != null
+            ? "b"
+            : (ogl ? "b" : "n,b");
+        var dllOverrides = this.macOSNativeDxmt
+            ? "msquic=,mscoree=n,b;d3d9,d3d10core=b;d3d11,dxgi=n"
+            : $"{WINEDLLOVERRIDES}{rendererOverride}";
         var wineEnviromentVariables = new Dictionary<string, string>
         {
             { "WINEPREFIX", Settings.Prefix.FullName },
-            { "WINEDLLOVERRIDES", $"{WINEDLLOVERRIDES}{(ogl ? "b" : "n,b")}" }
+            { "WINEDLLOVERRIDES", dllOverrides }
         };
 
         if (!string.IsNullOrEmpty(Settings.DebugVars))
@@ -195,9 +360,20 @@ public class CompatibilityTools
         }
 
         wineEnviromentVariables.Add("DXVK_HUD", dxvkHud);
-        wineEnviromentVariables.Add("DXVK_ASYNC", dxvkAsyncOn);
+        // Kegworks' asynchronous compiler can continuously allocate Metal
+        // resources on macOS. In practice this can consume tens of gigabytes
+        // before FFXIV reaches the lobby, so keep the bundle's stable path
+        // synchronous even if the cross-platform setting is enabled.
+        var effectiveDxvkAsync = this.macOSBundledRendererWindowsPath != null ? "0" : dxvkAsyncOn;
+        wineEnviromentVariables.Add("DXVK_ASYNC", effectiveDxvkAsync);
         AddMacOSBundleEnvironment(wineEnviromentVariables);
-        switch (Settings.SyncType)
+        if (this.macOSBundledDxmt)
+        {
+            // The current XIV on Mac runtime uses macOS-native msync by default.
+            // Do not enable esync/fsync at the same time.
+            wineEnviromentVariables.Add("WINEMSYNC", "1");
+        }
+        else switch (Settings.SyncType)
         {
             case WineSyncType.ESync:
                 wineEnviromentVariables.Add("WINEESYNC", "1");
@@ -250,19 +426,22 @@ public class CompatibilityTools
         if (Directory.Exists(wineLibraryPath))
             libraryPaths.Add(wineLibraryPath);
 
-        var currentDirectory = new DirectoryInfo(WineBinPath);
-        while (currentDirectory != null
-               && !string.Equals(
-                   currentDirectory.Name,
-                   "Contents",
-                   StringComparison.OrdinalIgnoreCase))
-        {
-            currentDirectory = currentDirectory.Parent;
-        }
+        var currentDirectory = FindMacOSBundleContents();
 
         if (currentDirectory != null)
         {
             var frameworksPath = Path.Combine(currentDirectory.FullName, "Frameworks");
+            var moltenVkCxPath = Path.Combine(frameworksPath, "moltenvkcx");
+            // Keep the renderer paired with the MoltenVK variant selected by
+            // its containing Wine bundle. Sikarugir's Kegworks DXVK build can
+            // allocate tens of gigabytes when paired with its newer generic
+            // MoltenVK library instead of moltenvkcx.
+            if (IsMacOSBundleOptionEnabled(currentDirectory, "MOLTENVKCX")
+                && Directory.Exists(moltenVkCxPath))
+            {
+                libraryPaths.Add(moltenVkCxPath);
+            }
+
             if (Directory.Exists(frameworksPath))
                 libraryPaths.Add(frameworksPath);
         }
@@ -276,6 +455,118 @@ public class CompatibilityTools
 
         environment["DYLD_FALLBACK_LIBRARY_PATH"] =
             string.Join(Path.PathSeparator, libraryPaths.Distinct(StringComparer.Ordinal));
+
+        if (this.macOSBundledRendererWindowsPath != null)
+        {
+            // Wine builtin PE modules and their Unix companions must be discovered
+            // from one architecture-containing root. Passing the x86_64-windows and
+            // x86_64-unix children separately makes winemetal fail its Unix-function
+            // ABI handshake (c0000142) even though all three DXMT DLLs are found.
+            var wineDllPaths = new List<string>
+            {
+                this.macOSBundledRendererRootPath ?? this.macOSBundledRendererWindowsPath
+            };
+            var existingWineDllPath = Environment.GetEnvironmentVariable("WINEDLLPATH");
+            if (!string.IsNullOrEmpty(existingWineDllPath))
+                wineDllPaths.Add(existingWineDllPath);
+
+            environment["WINEDLLPATH"] =
+                string.Join(Path.PathSeparator, wineDllPaths.Distinct(StringComparer.Ordinal));
+            // CrossOver-derived Wine engines, including Sikarugir's, use this
+            // companion variable to put renderer modules ahead of their bundled
+            // WineD3D modules.
+            environment["WINEDLLPATH_PREPEND"] =
+                this.macOSBundledRendererRootPath ?? this.macOSBundledRendererWindowsPath;
+        }
+
+        if (this.macOSBundledDxmt)
+        {
+            // Match XIV on Mac's DXMT settings. MetalFX spatial upscaling is opt-in
+            // because it trades image quality for a substantial reduction in GPU load.
+            var spatialFactor = this.macOSMetalFxSpatialOn ? "2.0" : "1.0";
+            environment["DXMT_CONFIG"] =
+                $"d3d11.metalSpatialUpscaleFactor={spatialFactor};d3d11.preferredMaxFrameRate=0;";
+            environment["DXMT_ENABLE_NVEXT"] = "1";
+            environment["DXMT_METALFX_SPATIAL_SWAPCHAIN"] =
+                this.macOSMetalFxSpatialOn ? "1" : "0";
+            environment["MTL_HUD_ENABLED"] =
+                this.macOSMetalPerformanceHudOn ? "1" : "0";
+            environment["MVK_CONFIG_FAST_MATH_ENABLED"] = "0";
+            environment["MVK_CONFIG_RESUME_LOST_DEVICE"] = "1";
+            environment["LANG"] = "en_US";
+            environment["MVK_CONFIG_LOG_LEVEL"] = "mvk_error";
+            environment["DOTNET_EnableWriteXorExecute"] = "0";
+        }
+    }
+
+    private DirectoryInfo? FindMacOSBundleContents()
+    {
+        var currentDirectory = new DirectoryInfo(WineBinPath);
+        while (currentDirectory != null
+               && !string.Equals(
+                   currentDirectory.Name,
+                   "Contents",
+                   StringComparison.OrdinalIgnoreCase))
+        {
+            currentDirectory = currentDirectory.Parent;
+        }
+
+        return currentDirectory;
+    }
+
+    private static bool IsMacOSBundleOptionEnabled(DirectoryInfo contentsDirectory, string option)
+    {
+        var infoPlist = Path.Combine(contentsDirectory.FullName, "Info.plist");
+        if (!File.Exists(infoPlist))
+            return false;
+
+        try
+        {
+            var values = XDocument.Load(infoPlist)
+                .Descendants("dict")
+                .FirstOrDefault()?
+                .Elements()
+                .ToList();
+            if (values == null)
+                return false;
+
+            for (var i = 0; i + 1 < values.Count; i++)
+            {
+                if (values[i].Name == "key"
+                    && values[i].Value == option)
+                {
+                    return values[i + 1].Name == "true"
+                           || (values[i + 1].Name == "integer" && values[i + 1].Value == "1");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not read macOS Wine bundle option {Option}", option);
+        }
+
+        return false;
+    }
+
+    public void EnsureKoreanFontFallback()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return;
+
+        const string fontSubstitutes =
+            @"HKLM\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes";
+        var replacements = new Dictionary<string, string>
+        {
+            { "MS Shell Dlg", "NanumGothic" },
+            { "MS Shell Dlg 2", "NanumGothic" },
+            { "Gulim", "NanumGothic" },
+            { "GulimChe", "NanumGothic" },
+            { "Malgun Gothic", "NanumGothic" },
+            { "Malgun Gothic Semilight", "NanumGothic" },
+        };
+
+        foreach (var replacement in replacements)
+            AddRegistryKey(fontSubstitutes, replacement.Key, replacement.Value);
     }
 
     public int[] GetProcessIds(string executableName)

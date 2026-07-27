@@ -55,7 +55,9 @@ public readonly struct WineSettings
         if (startupType == WineStartupType.Managed)
         {
             var wineDistroId = CompatUtil.GetWineIdForDistro();
-            this.Release = managedWine switch
+            this.Release = wineDistroId == WineReleaseDistro.macOS
+                ? new WineMacOSRelease()
+                : managedWine switch
             {
                 WineManagedVersion.Stable => new WineStableRelease(wineDistroId),
                 WineManagedVersion.Beta => new WineBetaRelease(wineDistroId),

@@ -573,4 +573,43 @@ You may have to reinstall the game.</value>
     <data name="EnableFsyncSettingUnsupportedPlatformValidation" xml:space="preserve">
         <value>FSync is only available on Linux</value>
     </data>
+    <data name="MacOSMetalFxSpatialSetting" xml:space="preserve">
+        <value>MetalFX spatial upscaling</value>
+    </data>
+    <data name="MacOSMetalFxSpatialSettingDescription" xml:space="preserve">
+        <value>Render at half resolution and upscale through MetalFX for higher frame rates on macOS. Image quality may be reduced.</value>
+    </data>
+    <data name="MacOSMetalPerformanceHudSetting" xml:space="preserve">
+        <value>Metal performance HUD</value>
+    </data>
+    <data name="MacOSMetalPerformanceHudSettingDescription" xml:space="preserve">
+        <value>Show Apple's Metal performance overlay while the game is running.</value>
+    </data>
+    <data name="GameConfigBackupTitle" xml:space="preserve">
+        <value>Official launcher-compatible settings backup</value>
+    </data>
+    <data name="GameConfigBackupDescription" xml:space="preserve">
+        <value>Export or import FFXIVconfig.fea files compatible with the official Windows and macOS launchers. System-specific graphics settings and screenshots are not included.</value>
+    </data>
+    <data name="GameConfigBackupPreserveNewer" xml:space="preserve">
+        <value>Keep existing files when they are newer than the imported backup</value>
+    </data>
+    <data name="GameConfigBackupExport" xml:space="preserve">
+        <value>Export FFXIVconfig.fea</value>
+    </data>
+    <data name="GameConfigBackupImport" xml:space="preserve">
+        <value>Import FFXIVconfig.fea</value>
+    </data>
+    <data name="GameConfigBackupPathMissing" xml:space="preserve">
+        <value>The game configuration path is not set.</value>
+    </data>
+    <data name="GameConfigBackupFailed" xml:space="preserve">
+        <value>Settings backup operation failed: {0}</value>
+    </data>
+    <data name="GameConfigBackupExported" xml:space="preserve">
+        <value>Exported {0} character(s) and {1} file(s) to {2}</value>
+    </data>
+    <data name="GameConfigBackupImported" xml:space="preserve">
+        <value>Imported {0} file(s); skipped {1} newer file(s). A safety backup was saved to {2}</value>
+    </data>
 </root>

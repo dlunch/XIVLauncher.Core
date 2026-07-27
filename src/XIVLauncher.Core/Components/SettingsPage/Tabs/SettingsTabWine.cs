@@ -38,6 +38,9 @@ public class SettingsTabWine : SettingsTab
             {
                 CheckValidity = b =>
                 {
+                    if (b != WineSyncType.FSync)
+                        return null;
+
                     switch (WineUtility.SystemFsyncSupport())
                     {
                         case FsyncSupport.UnsupportedPlatform:
@@ -58,6 +61,26 @@ public class SettingsTabWine : SettingsTab
             new SettingsEntry<bool>(Strings.DXVKEnableAsyncSetting, Strings.DXVKEnableAsyncSettingDescription, () => Program.Config.DxvkAsyncEnabled ?? true, b => Program.Config.DxvkAsyncEnabled = b)
             {
                 CheckVisibility = () => dxvkVersionSetting.Value != DxvkVersion.Disabled
+            },
+            new SettingsEntry<bool>(
+                Strings.MacOSMetalFxSpatialSetting,
+                Strings.MacOSMetalFxSpatialSettingDescription,
+                () => Program.Config.MacOSMetalFxSpatialEnabled ?? false,
+                b => Program.Config.MacOSMetalFxSpatialEnabled = b)
+            {
+                CheckVisibility = () =>
+                    RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                    && dxvkVersionSetting.Value != DxvkVersion.Disabled
+            },
+            new SettingsEntry<bool>(
+                Strings.MacOSMetalPerformanceHudSetting,
+                Strings.MacOSMetalPerformanceHudSettingDescription,
+                () => Program.Config.MacOSMetalPerformanceHudEnabled ?? false,
+                b => Program.Config.MacOSMetalPerformanceHudEnabled = b)
+            {
+                CheckVisibility = () =>
+                    RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                    && dxvkVersionSetting.Value != DxvkVersion.Disabled
             },
 
             // GameMode

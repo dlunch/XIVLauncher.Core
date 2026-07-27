@@ -69,6 +69,10 @@ public interface ILauncherConfig
 
     public DxvkHudType DxvkHudType { get; set; }
 
+    public bool? MacOSMetalFxSpatialEnabled { get; set; }
+
+    public bool? MacOSMetalPerformanceHudEnabled { get; set; }
+
     public string? WineDebugVars { get; set; }
 
     public bool? FixLocale { get; set; }

@@ -44,6 +44,13 @@ public class UnixDalamudRunner : IDalamudRunner
         environment.Add("DALAMUD_RUNTIME", dotnetRuntimePath);
         environment.Add("DOTNET_ROOT", dotnetRuntimePath);
 
+        // Dalamud currently only accepts the four global client languages (0-3).
+        // The Korean service uses a separate enum value, so pass English to the
+        // injector while preserving the Korean game's own launch arguments.
+        var dalamudLanguage = startInfo.Language == ClientLanguage.Korean
+            ? ClientLanguage.English
+            : startInfo.Language;
+
         var launchArguments = new List<string>
         {
             $"\"{runner.FullName}\"",
@@ -55,7 +62,7 @@ public class UnixDalamudRunner : IDalamudRunner
             DalamudInjectorArgs.LoggingPath(startInfo.LoggingPath),
             DalamudInjectorArgs.PluginDirectory(startInfo.PluginDirectory),
             DalamudInjectorArgs.AssetDirectory(startInfo.AssetDirectory),
-            DalamudInjectorArgs.ClientLanguage((int)startInfo.Language),
+            DalamudInjectorArgs.ClientLanguage((int)dalamudLanguage),
             DalamudInjectorArgs.DelayInitialize(startInfo.DelayInitializeMs),
             DalamudInjectorArgs.TsPackB64(Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(startInfo.TroubleshootingPackData))),
         };
