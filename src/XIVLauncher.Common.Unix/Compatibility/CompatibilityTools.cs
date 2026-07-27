@@ -94,13 +94,6 @@ public class CompatibilityTools
     {
         if (!File.Exists(WineExecutablePath))
         {
-            if (Settings.StartupType == WineStartupType.Managed
-                && RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                throw new PlatformNotSupportedException(
-                    "Managed Wine is not available for macOS. Select Custom Wine and choose a directory containing wine and wineserver.");
-            }
-
             Log.Information($"Compatibility tool does not exist, downloading {Settings.Release.DownloadUrl}");
             await DownloadTool(httpClient, tempPath).ConfigureAwait(false);
         }
@@ -115,11 +108,35 @@ public class CompatibilityTools
     private bool TryUseMacOSBundledRenderer()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-            || Settings.StartupType != WineStartupType.Custom
             || dxvkVersion == DxvkVersion.Disabled)
         {
             return false;
         }
+
+        // Managed macOS Wine packages keep their DXMT/Winemetal modules in the
+        // regular Wine library tree instead of inside an application wrapper.
+        var managedRendererRoot = Path.GetFullPath(
+            Path.Combine(WineBinPath, "..", "lib", "wine"));
+        var managedRendererWindowsPath =
+            Path.Combine(managedRendererRoot, "x86_64-windows");
+        var managedRendererUnixPath =
+            Path.Combine(managedRendererRoot, "x86_64-unix");
+        if (Settings.StartupType == WineStartupType.Managed
+            && File.Exists(Path.Combine(managedRendererWindowsPath, "d3d11.dll"))
+            && File.Exists(Path.Combine(managedRendererWindowsPath, "dxgi.dll"))
+            && File.Exists(Path.Combine(managedRendererUnixPath, "winemetal.so")))
+        {
+            macOSBundledRendererRootPath = managedRendererRoot;
+            macOSBundledRendererWindowsPath = managedRendererWindowsPath;
+            macOSBundledDxmt = true;
+            Log.Information(
+                "Using the DXMT renderer bundled with managed macOS Wine: {Path}",
+                macOSBundledRendererWindowsPath);
+            return true;
+        }
+
+        if (Settings.StartupType != WineStartupType.Custom)
+            return false;
 
         var contentsDirectory = FindMacOSBundleContents();
         if (contentsDirectory == null)

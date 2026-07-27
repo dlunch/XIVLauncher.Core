@@ -138,21 +138,6 @@ sealed class Program
         Config.WineBinaryPath ??= "/usr/bin";
         Config.WineDebugVars ??= "-all";
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-            && Config.WineStartupType == WineStartupType.Managed)
-        {
-            var macOSWineBinPath = CompatUtil.FindMacOSWineBinPath();
-            if (!string.IsNullOrEmpty(macOSWineBinPath))
-            {
-                Log.Information(
-                    "Managed Wine is unavailable on macOS; using detected Wine bundle at {WineBinPath}",
-                    macOSWineBinPath);
-                Config.WineStartupType = WineStartupType.Custom;
-                Config.WineBinaryPath = macOSWineBinPath;
-                Config.WineSyncType = WineSyncType.ESync;
-            }
-        }
-
         Config.FixLDP ??= false;
         Config.FixIM ??= false;
         Config.FixLocale ??= false;
