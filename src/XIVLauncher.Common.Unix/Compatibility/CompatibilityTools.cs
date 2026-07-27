@@ -1,3 +1,5 @@
+#nullable enable annotations
+
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
@@ -481,7 +483,7 @@ public class CompatibilityTools
         }
     }
 
-    private DirectoryInfo FindMacOSBundleContents()
+    private DirectoryInfo? FindMacOSBundleContents()
     {
         var currentDirectory = new DirectoryInfo(WineBinPath);
         while (currentDirectory != null

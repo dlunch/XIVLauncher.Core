@@ -1062,14 +1062,12 @@ public class MainPage : Page
         // SDL may terminate the macOS launcher event loop when its only window is
         // hidden. Keep the launcher alive there so the Wine child remains owned
         // and observable while the game starts.
-        if ((!Program.IsSteamDeckHardware || CoreEnvironmentSettings.IsSteamCompatTool)
-            && !OperatingSystem.IsMacOS())
+        if (!OperatingSystem.IsMacOS())
         {
-            Hide();
-        }
-        else
-        {
-            App.State = LauncherApp.LauncherState.SteamDeckPrompt;
+            if (!Program.IsSteamDeckHardware || CoreEnvironmentSettings.IsSteamCompatTool)
+                Hide();
+            else
+                App.State = LauncherApp.LauncherState.SteamDeckPrompt;
         }
 
         if (launchedProcess == null)
