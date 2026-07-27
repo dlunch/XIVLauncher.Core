@@ -22,27 +22,15 @@ public class CompatibilityTools
     private const string WINEDLLOVERRIDES = "msquic=,mscoree=n,b;d3d9,d3d11,d3d10core,dxgi=";
     private const uint DXVK_CLEANUP_THRESHHOLD = 5;
     private const uint WINE_CLEANUP_THRESHHOLD = 5;
-    private const string MacOSDxmtBaseUrl =
-        "https://raw.githubusercontent.com/marzent/XIV-on-Mac/" +
-        "4ad3168e30fc97515e8d6a9e9fd4ba9c00b8f8f1/" +
-        "XIV%20on%20Mac/wine-builder/overrides/lib/wine/";
-    private static readonly (string RelativePath, string Checksum)[] MacOSDxmtOverrides =
+    private static readonly (string FileName, string Checksum)[] MacOSDxmtDlls =
     [
         (
-            "x86_64-windows/d3d11.dll",
-            "365aaf05b67f4b814d34b8da7401795b93bf0c6c4197762d2bf4c0a75868f3a95d54f63ef6cc8298db90493461edbf68d89ffb923486bc1ad6cc85f51cfa2d94"
+            "d3d11.dll",
+            "a2d2f3f379649a234e0e74c18693621a801a9a83850339b2523b62eafefc30f5ad5a7d276ce5e474a472dcf1c0d1858e19281b7fded1c9847e53074c22ff926c"
         ),
         (
-            "x86_64-windows/dxgi.dll",
-            "476087361936b67cb931c95fe28cf8de03b9839e0986be85605043c6f1b684f0ea7339922d6b82b6d4addbdd8516b717895cfffeaa5d50c25f6de2a960b7ac06"
-        ),
-        (
-            "x86_64-windows/winemetal.dll",
-            "4e2dec4d81a3e245e9015677de19b5be3cfdc116b383faf0c81083d9f1b04fac4766271ec407e6a3a9243eaac9b0f9bb47d5f075fcc3705a53a515bfdbc074fc"
-        ),
-        (
-            "x86_64-unix/winemetal.so",
-            "0d587e8beebc2fb3c25f7cff7cccfd20e7dd12f2c84011140414693bdb675411f3ca4b70d628315fbdda9dba78eda1af07ce10cc6379333a31c360cb40a78af7"
+            "dxgi.dll",
+            "f125effcc1242bb74e4ab3d6cd153e7e1db013ce0f06122b12c27dde01195f6b4acd9a7217d887da0702754172a1a01e8ea5862119c1107116fd392a1cdfbc94"
         ),
     ];
 
@@ -70,6 +58,7 @@ public class CompatibilityTools
     private string? macOSBundledRendererRootPath;
     private string? macOSBundledRendererWindowsPath;
     private bool macOSBundledDxmt;
+    private bool macOSNativeDxmt;
 
     public bool IsToolReady { get; private set; }
     public WineSettings Settings { get; private set; }
@@ -121,8 +110,6 @@ public class CompatibilityTools
             await DownloadTool(httpClient, tempPath).ConfigureAwait(false);
         }
 
-        await EnsureMacOSDxmtOverrides(httpClient, tempPath).ConfigureAwait(false);
-
         // Select the macOS renderer before starting Wine for the first time.
         // A Wine server inherits its environment when it starts and keeps it
         // for the lifetime of the prefix, so detecting DXMT after EnsurePrefix
@@ -132,55 +119,39 @@ public class CompatibilityTools
         Log.Information("Initializing Wine prefix");
         EnsurePrefix();
         Log.Information("Wine prefix is initialized");
-        if (!useMacOSBundledRenderer)
+        if (this.macOSNativeDxmt)
+            InstallManagedMacOSDxmt();
+        else if (!useMacOSBundledRenderer)
             await Dxvk.Dxvk.InstallDxvk(httpClient, Settings.Prefix, dxvkDirectory, dxvkVersion).ConfigureAwait(false);
 
         IsToolReady = true;
     }
 
-    private async Task EnsureMacOSDxmtOverrides(HttpClient httpClient, DirectoryInfo tempPath)
+    private void InstallManagedMacOSDxmt()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-            || Settings.StartupType != WineStartupType.Managed)
+            || Settings.StartupType != WineStartupType.Managed
+            || this.macOSBundledRendererWindowsPath == null)
         {
             return;
         }
 
-        var wineLibraryRoot = Path.GetFullPath(
-            Path.Combine(WineBinPath, "..", "lib", "wine"));
-
-        foreach (var (relativePath, checksum) in MacOSDxmtOverrides)
+        var system32Path = Path.Combine(
+            Settings.Prefix.FullName,
+            "drive_c",
+            "windows",
+            "system32");
+        Directory.CreateDirectory(system32Path);
+        foreach (var (fileName, checksum) in MacOSDxmtDlls)
         {
-            var targetPath = Path.Combine(
-                wineLibraryRoot,
-                relativePath.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(targetPath)
-                && CompatUtil.EnsureChecksumMatch(targetPath, [checksum]))
-            {
-                continue;
-            }
+            var sourcePath = Path.Combine(this.macOSBundledRendererWindowsPath, fileName);
+            if (!CompatUtil.EnsureChecksumMatch(sourcePath, [checksum]))
+                throw new InvalidDataException($"SHA512 checksum verification failed for {fileName}");
 
-            var tempFilePath = Path.Combine(tempPath.FullName, Guid.NewGuid().ToString());
-            try
-            {
-                Log.Information("Downloading managed macOS DXMT override {Path}", relativePath);
-                await File.WriteAllBytesAsync(
-                        tempFilePath,
-                        await httpClient.GetByteArrayAsync(MacOSDxmtBaseUrl + relativePath)
-                            .ConfigureAwait(false))
-                    .ConfigureAwait(false);
-
-                if (!CompatUtil.EnsureChecksumMatch(tempFilePath, [checksum]))
-                    throw new InvalidDataException($"SHA512 checksum verification failed for {relativePath}");
-
-                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-                File.Copy(tempFilePath, targetPath, true);
-            }
-            finally
-            {
-                if (File.Exists(tempFilePath))
-                    File.Delete(tempFilePath);
-            }
+            var targetPath = Path.Combine(system32Path, fileName);
+            if (!File.Exists(targetPath)
+                || !CompatUtil.EnsureChecksumMatch(targetPath, [checksum]))
+                File.Copy(sourcePath, targetPath, true);
         }
     }
 
@@ -192,24 +163,26 @@ public class CompatibilityTools
             return false;
         }
 
-        // Managed macOS Wine packages keep their DXMT/Winemetal modules in the
-        // regular Wine library tree instead of inside an application wrapper.
+        // XIV on Mac ships Wine/Winemetal and the native DXMT DLLs as one tested
+        // release. Keep those components paired: DXMT built for Wine 11 cannot
+        // be dropped into the older 9.12 runtime without missing GDI/D3DKMT APIs.
         var managedRendererRoot = Path.GetFullPath(
             Path.Combine(WineBinPath, "..", "lib", "wine"));
-        var managedRendererWindowsPath =
-            Path.Combine(managedRendererRoot, "x86_64-windows");
         var managedRendererUnixPath =
             Path.Combine(managedRendererRoot, "x86_64-unix");
+        var managedDxmtPath = Path.GetFullPath(
+            Path.Combine(WineBinPath, "..", "..", "dxmt"));
         if (Settings.StartupType == WineStartupType.Managed
-            && File.Exists(Path.Combine(managedRendererWindowsPath, "d3d11.dll"))
-            && File.Exists(Path.Combine(managedRendererWindowsPath, "dxgi.dll"))
+            && File.Exists(Path.Combine(managedDxmtPath, "d3d11.dll"))
+            && File.Exists(Path.Combine(managedDxmtPath, "dxgi.dll"))
             && File.Exists(Path.Combine(managedRendererUnixPath, "winemetal.so")))
         {
             macOSBundledRendererRootPath = managedRendererRoot;
-            macOSBundledRendererWindowsPath = managedRendererWindowsPath;
+            macOSBundledRendererWindowsPath = managedDxmtPath;
             macOSBundledDxmt = true;
+            macOSNativeDxmt = true;
             Log.Information(
-                "Using the DXMT renderer bundled with managed macOS Wine: {Path}",
+                "Using the native DXMT renderer paired with managed macOS Wine: {Path}",
                 macOSBundledRendererWindowsPath);
             return true;
         }
@@ -342,10 +315,13 @@ public class CompatibilityTools
         var rendererOverride = this.macOSBundledRendererWindowsPath != null
             ? "b"
             : (ogl ? "b" : "n,b");
+        var dllOverrides = this.macOSNativeDxmt
+            ? "msquic=,mscoree=n,b;d3d9,d3d10core=b;d3d11,dxgi=n"
+            : $"{WINEDLLOVERRIDES}{rendererOverride}";
         var wineEnviromentVariables = new Dictionary<string, string>
         {
             { "WINEPREFIX", Settings.Prefix.FullName },
-            { "WINEDLLOVERRIDES", $"{WINEDLLOVERRIDES}{rendererOverride}" }
+            { "WINEDLLOVERRIDES", dllOverrides }
         };
 
         if (!string.IsNullOrEmpty(Settings.DebugVars))
@@ -499,6 +475,9 @@ public class CompatibilityTools
             environment["DXMT_METALFX_SPATIAL_SWAPCHAIN"] = "0";
             environment["MVK_CONFIG_FAST_MATH_ENABLED"] = "0";
             environment["MVK_CONFIG_RESUME_LOST_DEVICE"] = "1";
+            environment["LANG"] = "en_US";
+            environment["MVK_CONFIG_LOG_LEVEL"] = "mvk_error";
+            environment["DOTNET_EnableWriteXorExecute"] = "0";
         }
     }
 

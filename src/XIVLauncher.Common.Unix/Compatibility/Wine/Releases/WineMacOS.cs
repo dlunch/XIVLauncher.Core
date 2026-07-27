@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace XIVLauncher.Common.Unix.Compatibility.Wine.Releases;
 
 /// <summary>
@@ -5,13 +7,14 @@ namespace XIVLauncher.Common.Unix.Compatibility.Wine.Releases;
 /// </summary>
 public sealed class WineMacOSRelease : IWineRelease
 {
-    public string Name { get; } = "wine";
+    public string Name { get; } =
+        Path.Combine("XIV on Mac.app", "Contents", "Resources", "wine");
 
     public string DownloadUrl { get; } =
-        "https://github.com/marzent/winecx/releases/download/ff-wine-9.12.1/wine.tar.gz";
+        "https://softwareupdate.xivmac.com/sites/default/files/update_data/XIV%20on%20Mac5.4.2.tar.xz";
 
     public string[] Checksums { get; } =
     [
-        "41835ab42b526bd1fd6f4670fa9df4267213b83550b9438f17970558ee44a37e54dbab7cc1cf25ccf0fe54fea431d9044b7e557a9aab21206ad6bfea6fa910a0",
+        "48a04b9dca4204b6c9345bd46d263be647be2e5df63dec86e7f810167365f83005a32f5bceed79859f28b12258ab7f03e657e40cd14651396d89188ca30211b9",
     ];
 }
