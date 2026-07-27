@@ -1000,8 +1000,14 @@ public class MainPage : Page
                     compatibilityToolException);
             }
 
+            Log.Information("Wine compatibility tool is ready");
+
             if (koreanGameToken != null)
+            {
+                Log.Information("Configuring Korean font fallback");
                 Program.CompatibilityTools.EnsureKoreanFontFallback();
+                Log.Information("Korean font fallback is ready");
+            }
 
             App.StartLoading(Strings.StartingGame, Strings.HaveFun);
 
@@ -1026,12 +1032,16 @@ public class MainPage : Page
         Process? launchedProcess;
         if (koreanGameToken != null)
         {
+            Log.Information("Starting Korean game process");
             launchedProcess = new KoreanGameLauncher().LaunchGame(
                 runner,
                 koreanGameToken,
                 gameArgs,
                 App.Settings.GamePath!,
                 App.Settings.DpiAwareness.GetValueOrDefault(DpiAwareness.Unaware));
+            Log.Information(
+                "Korean game runner returned process {ProcessId}",
+                launchedProcess?.Id);
         }
         else
         {
@@ -1049,7 +1059,11 @@ public class MainPage : Page
 
         // Hide the launcher if not Steam Deck or if using as a compatibility tool (XLM)
         // Show the Steam Deck prompt if on steam deck and not using as a compatibility tool
-        if (!Program.IsSteamDeckHardware || CoreEnvironmentSettings.IsSteamCompatTool)
+        // SDL may terminate the macOS launcher event loop when its only window is
+        // hidden. Keep the launcher alive there so the Wine child remains owned
+        // and observable while the game starts.
+        if ((!Program.IsSteamDeckHardware || CoreEnvironmentSettings.IsSteamCompatTool)
+            && !OperatingSystem.IsMacOS())
         {
             Hide();
         }

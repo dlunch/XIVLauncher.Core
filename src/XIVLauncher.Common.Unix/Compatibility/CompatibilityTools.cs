@@ -104,7 +104,9 @@ public class CompatibilityTools
         // leaves the server without WINEDLLPATH and the game never appears.
         var useMacOSBundledRenderer = TryUseMacOSBundledRenderer();
 
+        Log.Information("Initializing Wine prefix");
         EnsurePrefix();
+        Log.Information("Wine prefix is initialized");
         if (!useMacOSBundledRenderer)
             await Dxvk.Dxvk.InstallDxvk(httpClient, Settings.Prefix, dxvkDirectory, dxvkVersion).ConfigureAwait(false);
 
