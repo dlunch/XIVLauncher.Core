@@ -98,8 +98,14 @@ public class CompatibilityTools
             await DownloadTool(httpClient, tempPath).ConfigureAwait(false);
         }
 
+        // Select the macOS renderer before starting Wine for the first time.
+        // A Wine server inherits its environment when it starts and keeps it
+        // for the lifetime of the prefix, so detecting DXMT after EnsurePrefix
+        // leaves the server without WINEDLLPATH and the game never appears.
+        var useMacOSBundledRenderer = TryUseMacOSBundledRenderer();
+
         EnsurePrefix();
-        if (!TryUseMacOSBundledRenderer())
+        if (!useMacOSBundledRenderer)
             await Dxvk.Dxvk.InstallDxvk(httpClient, Settings.Prefix, dxvkDirectory, dxvkVersion).ConfigureAwait(false);
 
         IsToolReady = true;
@@ -183,11 +189,14 @@ public class CompatibilityTools
         // (and reject) them as native Windows DLLs before falling back to WineD3D.
         // Restore any files copied there by older launcher builds.
         var system32Path = Path.Combine(Settings.Prefix.FullName, "drive_c", "windows", "system32");
-        foreach (var dll in rendererDlls)
+        if (Directory.Exists(system32Path))
         {
-            var builtinDll = Path.Combine(wineBuiltinPath, dll);
-            if (File.Exists(builtinDll))
-                File.Copy(builtinDll, Path.Combine(system32Path, dll), true);
+            foreach (var dll in rendererDlls)
+            {
+                var builtinDll = Path.Combine(wineBuiltinPath, dll);
+                if (File.Exists(builtinDll))
+                    File.Copy(builtinDll, Path.Combine(system32Path, dll), true);
+            }
         }
 
         Log.Information(
